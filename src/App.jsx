@@ -6,7 +6,7 @@ import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import 'firebase/compat/storage';
 
-//Icons
+// --- React Icons ---
 import {
   Flame, Trophy, Check, Trash2, List, ArrowUp, ArrowDown, Calendar, Plus,
   ShieldAlert, LogOut, User, Users, LayoutDashboard, Edit3, UserX, XCircle, X
@@ -82,23 +82,22 @@ const calculateStreaks = (dateStrings) => {
   return { currentStreak, maxStreak };
 };
 
-const updateProfileScore = async (userId) => {
+// --- NEW: Renamed and updated function for leaderboard ---
+const updateProfileMaxStreak = async (userId) => {
     try {
         const habitsSnapshot = await db.collection("users").doc(userId).collection("habits").get();
-        let totalCurrentStreak = 0;
-        habitsSnapshot.forEach(doc => {
-            totalCurrentStreak += (doc.data().currentStreak || 0);
-        });
+        // Get all max streaks and find the highest one
+        const maxStreaks = habitsSnapshot.docs.map(d => d.data().maxStreak || 0);
+        const highestMaxStreak = Math.max(0, ...maxStreaks);
         
         await db.collection("profiles").doc(userId).update({
-            totalScore: totalCurrentStreak
+            highestMaxStreak: highestMaxStreak // Save the single highest streak
         });
     } catch (e) {
-        console.error("Error updating profile score: ", e);
+        console.error("Error updating profile max streak: ", e);
     }
 };
 
-// --- NEW: Notification Helper ---
 const showNotification = (title, body) => {
     if (Notification.permission === 'granted') {
         new Notification(title, {
@@ -162,8 +161,8 @@ function AuthPage() {
           displayName: user.displayName,
           photoURL: user.photoURL,
           createdAt: new Date(),
-          totalScore: 0,
-          reminderTime: null
+          highestMaxStreak: 0, // --- NEW: For leaderboard
+          reminderTime: null 
         });
       }
     } catch (error) {
@@ -192,7 +191,7 @@ function AuthPage() {
           displayName: displayName,
           photoURL: `https://api.dicebear.com/7.x/initials/svg?seed=${displayName}`,
           createdAt: new Date(),
-          totalScore: 0,
+          highestMaxStreak: 0, // --- NEW: For leaderboard
           reminderTime: null
         });
       }
@@ -338,7 +337,8 @@ function DashboardPage({ userId, habits, completions }) {
             maxStreak
         });
         
-        await updateProfileScore(userId);
+        // --- NEW: Update max streak for leaderboard ---
+        await updateProfileMaxStreak(userId);
 
     } catch (error) {
         console.error("Error toggling habit: ", error);
@@ -358,7 +358,8 @@ function DashboardPage({ userId, habits, completions }) {
           });
           await Promise.all(deletePromises);
           
-          await updateProfileScore(userId);
+          // --- NEW: Update max streak for leaderboard ---
+          await updateProfileMaxStreak(userId);
 
       } catch (error) {
           console.error("Error deleting habit: ", error);
@@ -372,7 +373,7 @@ function DashboardPage({ userId, habits, completions }) {
   const activeCount = habits.filter(h => h.currentStreak > 0).length;
 
   return (
-    <div className="pb-24">
+    <div className="pb-24 md:pb-6"> {/* --- FIX: Responsive padding --- */}
         <div className="p-4 flex justify-between items-center bg-gray-900/90 backdrop-blur sticky top-0 z-10 border-b border-white/10">
             <div className="flex items-center gap-2">
                 <div className="bg-orange-500 p-1.5 rounded">
@@ -385,76 +386,84 @@ function DashboardPage({ userId, habits, completions }) {
             </button>
         </div>
 
-        {!reorder && (
-            <div className="p-4">
-                <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-5 border border-white/10 shadow-lg relative overflow-hidden">
-                    <div className="absolute -right-5 -top-5 text-white/5">
-                        <Flame style={{width:120, height:120}} />
+        <div className="max-w-md mx-auto"> {/* --- NEW: Constrain content --- */}
+            {!reorder && (
+                <div className="p-4">
+                    <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-5 border border-white/10 shadow-lg relative overflow-hidden">
+                        <div className="absolute -right-5 -top-5 text-white/5">
+                            <Flame style={{width:120, height:120}} />
+                        </div>
+                        <div className="relative z-10">
+                            <div className="text-xs font-bold text-gray-400 uppercase mb-1">Active Streaks</div>
+                            <div className="text-4xl font-black">{activeCount} <span className="text-lg text-gray-500 font-normal">/ {habits.length}</span></div>
+                        </div>
                     </div>
-                    <div className="relative z-10">
-                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Active Streaks</div>
-                        <div className="text-4xl font-black">{activeCount} <span className="text-lg text-gray-500 font-normal">/ {habits.length}</span></div>
-                    </div>
-                </div>
-            </div>
-        )}
-
-        <div className="flex-1 p-4 space-y-3">
-            {habits.length === 0 && (
-                <div className="text-center py-10 text-gray-500">
-                    <Calendar className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                    <p>No habits yet. Add one!</p>
                 </div>
             )}
-            {habits.map((h, i) => {
-                const isDone = completions.some(c => c.habitId === h.id && c.date === todayStr);
-                
-                return (
-                    <div key={h.id} className={`p-4 rounded-xl flex items-center gap-4 transition-all ${isDone ? 'bg-emerald-900/20 border border-emerald-500/30' : 'bg-gray-800 border border-transparent'} ${reorder ? 'border-dashed border-gray-600' : ''}`}>
-                        
-                        {reorder ? (
-                            <div className="flex flex-col gap-2">
-                                <button onClick={() => move(i, 'up')} disabled={true} className="opacity-50 hover:opacity-100 disabled:opacity-10"><ArrowUp className="w-4 h-4" /></button>
-                                <button onClick={() => move(i, 'down')} disabled={true} className="opacity-50 hover:opacity-100 disabled:opacity-10"><ArrowDown className="w-4 h-4" /></button>
-                            </div>
-                        ) : (
-                            <button onClick={() => toggle(h.id)} className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${isDone ? 'bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-gray-700 text-gray-500'}`}>
-                                {isDone ? <Check className="w-6 h-6 stroke-[3]" /> : <div className="w-3 h-3 bg-gray-600 rounded-full"></div>}
-                            </button>
-                        )}
-                        
-                        <div className="flex-1 min-w-0">
-                            <h3 className={`font-medium text-lg truncate ${isDone ? 'text-gray-500 line-through' : ''}`}>{h.name}</h3>
-                            {!reorder && (
-                                <div className="flex gap-3 mt-1 text-xs">
-                                    <span className={`flex items-center ${h.currentStreak > 0 ? 'text-orange-400' : 'text-gray-500'}`}>
-                                        <Flame className="w-3 h-3 mr-1" /> {h.currentStreak}
-                                    </span>
-                                    <span className="text-gray-600 flex items-center">
-                                        <Trophy className="w-3 h-3 mr-1" /> {h.maxStreak}
-                                    </span>
+
+            <div className="flex-1 p-4 space-y-3">
+                {habits.length === 0 && (
+                    <div className="text-center py-10 text-gray-500">
+                        <Calendar className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                        <p>No habits yet. Add one!</p>
+                    </div>
+                )}
+                {habits.map((h, i) => {
+                    const isDone = completions.some(c => c.habitId === h.id && c.date === todayStr);
+                    
+                    return (
+                        <div key={h.id} className={`p-4 rounded-xl flex items-center gap-4 transition-all ${isDone ? 'bg-emerald-900/20 border border-emerald-500/30' : 'bg-gray-800 border border-transparent'} ${reorder ? 'border-dashed border-gray-600' : ''}`}>
+                            
+                            {reorder ? (
+                                <div className="flex flex-col gap-2">
+                                    <button onClick={() => move(i, 'up')} disabled={true} className="opacity-50 hover:opacity-100 disabled:opacity-10"><ArrowUp className="w-4 h-4" /></button>
+                                    <button onClick={() => move(i, 'down')} disabled={true} className="opacity-50 hover:opacity-100 disabled:opacity-10"><ArrowDown className="w-4 h-4" /></button>
                                 </div>
+                            ) : (
+                                <button onClick={() => toggle(h.id)} className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${isDone ? 'bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-gray-700 text-gray-500'}`}>
+                                    {isDone ? <Check className="w-6 h-6 stroke-[3]" /> : <div className="w-3 h-3 bg-gray-600 rounded-full"></div>}
+                                </button>
+                            )}
+                            
+                            <div className="flex-1 min-w-0">
+                                <h3 className={`font-medium text-lg truncate ${isDone ? 'text-gray-500 line-through' : ''}`}>{h.name}</h3>
+                                {!reorder && (
+                                    <div className="flex gap-3 mt-1 text-xs">
+                                        <span className={`flex items-center ${h.currentStreak > 0 ? 'text-orange-400' : 'text-gray-500'}`}>
+                                            <Flame className="w-3 h-3 mr-1" /> {h.currentStreak}
+                                        </span>
+                                        <span className="text-gray-600 flex items-center">
+                                            <Trophy className="w-3 h-3 mr-1" /> {h.maxStreak}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {!reorder && (
+                                <button onClick={() => deleteHabit(h.id)} className="p-2 text-gray-600 hover:text-red-400">
+                                    <Trash2 className="w-5 h-5" />
+                                </button>
                             )}
                         </div>
-
-                        {!reorder && (
-                            <button onClick={() => deleteHabit(h.id)} className="p-2 text-gray-600 hover:text-red-400">
-                                <Trash2 className="w-5 h-5" />
-                            </button>
-                        )}
-                    </div>
-                );
-            })}
+                    );
+                })}
+            </div>
         </div>
 
+        {/* --- FIX: "Add" button is now ABSOLUTE --- */}
         {!reorder && (
-            <button onClick={() => setShowAdd(true)} className="fixed bottom-24 right-6 w-14 h-14 bg-orange-500 rounded-full shadow-2xl flex items-center justify-center text-white hover:bg-orange-600 transition-transform active:scale-90 z-50">
+            <button 
+                onClick={() => setShowAdd(true)} 
+                className="absolute bottom-24 right-6 w-14 h-14 bg-orange-500 rounded-full shadow-2xl flex items-center justify-center text-white hover:bg-orange-600 transition-transform active:scale-90 z-20
+                           md:bottom-6"
+            >
                 <Plus className="w-8 h-8" />
             </button>
         )}
 
+        {/* --- FIX: Add bottom padding for nav bar --- */}
         {showAdd && (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end justify-center" onClick={() => setShowAdd(false)}>
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end justify-center pb-20 md:pb-0" onClick={() => setShowAdd(false)}>
                 <div className="bg-gray-900 w-full max-w-md rounded-t-3xl p-6 border-t border-gray-800" onClick={e => e.stopPropagation()}>
                     <h2 className="text-xl font-bold mb-4">New Habit</h2>
                     <form onSubmit={addHabit}>
@@ -501,16 +510,18 @@ function FriendsPage({ userId, handleEndFriendship }) {
           if (!userProfileSnap.exists) continue;
           
           const userProfile = userProfileSnap.data();
-          const totalCurrentStreak = userProfile.totalScore || 0;
+          // --- NEW: Read highestMaxStreak for leaderboard ---
+          const highestMax = userProfile.highestMaxStreak || 0;
           
           leaderboardData.push({ 
               ...userProfile, 
-              totalScore: totalCurrentStreak,
+              highestMaxStreak: highestMax,
               requestId: user.requestId
           });
       }
       
-      leaderboardData.sort((a, b) => b.totalScore - a.totalScore);
+      // --- NEW: Sort by highestMaxStreak ---
+      leaderboardData.sort((a, b) => b.highestMaxStreak - a.highestMaxStreak);
       setLeaderboard(leaderboardData);
 
     } catch (e) {
@@ -633,7 +644,7 @@ function FriendsPage({ userId, handleEndFriendship }) {
   };
 
   return (
-    <div className="p-4 pb-24 space-y-6">
+    <div className="p-4 pb-24 space-y-6 md:pb-6 md:max-w-2xl md:mx-auto"> {/* --- FIX: Responsive layout --- */}
       <h1 className="text-3xl font-bold text-white">Friends</h1>
       
       <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
@@ -695,7 +706,7 @@ function FriendsPage({ userId, handleEndFriendship }) {
       <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
         <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
           <Trophy className="text-yellow-500" />
-          Leaderboard (Current Streaks)
+          Leaderboard (Highest Streak)
         </h2>
         {loading ? (
           <LoadingSpinner />
@@ -718,8 +729,9 @@ function FriendsPage({ userId, handleEndFriendship }) {
                     {user.displayName} {user.uid === userId && '(You)'}
                   </p>
                 </div>
+                {/* --- NEW: Show highestMaxStreak --- */}
                 <span className="font-bold text-lg text-orange-400">
-                  {user.totalScore} 🔥
+                  {user.highestMaxStreak} 🏆
                 </span>
               </li>
             ))}
@@ -730,7 +742,6 @@ function FriendsPage({ userId, handleEndFriendship }) {
   );
 }
 
-// --- UPDATED PROFILE PAGE ---
 function ProfilePage({ profile, userId, handleEndFriendship }) {
     const [friendList, setFriendList] = useState([]);
     const [loadingFriends, setLoadingFriends] = useState(true);
@@ -741,7 +752,6 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState(null);
 
-    // --- Notification State ---
     const [notifPermission, setNotifPermission] = useState(Notification.permission);
     const [reminderTime, setReminderTime] = useState(profile?.reminderTime || '');
 
@@ -783,7 +793,6 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
     }, [fetchFriendProfiles]);
 
     useEffect(() => {
-      // Update local state if profile prop changes
       if (profile) {
         setReminderTime(profile.reminderTime || '');
         setNewDisplayName(profile.displayName);
@@ -845,7 +854,6 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
         }
     };
 
-    // --- Handle Notification Permission ---
     const requestNotifPermission = async () => {
         const permission = await Notification.requestPermission();
         setNotifPermission(permission);
@@ -854,11 +862,10 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
         }
     };
 
-    // --- Handle Saving Reminder Time ---
     const handleSaveReminder = async () => {
         try {
             await db.collection("profiles").doc(userId).update({
-                reminderTime: reminderTime || null // Save null if empty
+                reminderTime: reminderTime || null
             });
             alert("Reminder time saved!");
         } catch (err) {
@@ -872,7 +879,7 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
     }
 
     return (
-        <div className="p-4 max-w-lg mx-auto pb-24 space-y-6">
+        <div className="p-4 max-w-lg mx-auto pb-24 space-y-6 md:pb-6"> {/* --- FIX: Responsive padding --- */}
             <h1 className="text-3xl font-bold text-white mb-6 text-center">Profile</h1>
             
             <div className="bg-gray-800 p-6 rounded-xl shadow-lg flex flex-col items-center border border-gray-700">
@@ -906,7 +913,6 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
                 </button>
             </div>
             
-            {/* --- NEW: Notification Settings --- */}
             <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
                 <h2 className="text-xl font-bold mb-4">Notifications</h2>
                 {notifPermission === 'default' && (
@@ -1018,6 +1024,7 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
         </div>
     );
 }
+// --- END OF UPDATED PROFILE PAGE ---
 
 
 // --- 6. MAIN APP ---
@@ -1079,34 +1086,32 @@ const App = () => {
         };
     }, [user, isAuthReady]);
 
-    // --- Notification Scheduler ---
+    // --- NEW: Notification Scheduler ---
     useEffect(() => {
         if (!profile || !profile.reminderTime || !isAuthReady || habits.length === 0) {
-            return; // No user, no reminder time, or no habits
+            return;
         }
         
         if (Notification.permission !== 'granted') {
-            return; // Permission not granted
+            return;
         }
 
-        // Check if all habits are already done
         const todayStr = getISODateString(new Date());
         const allDone = habits.every(h => 
             completions.some(c => c.habitId === h.id && c.date === todayStr)
         );
 
         if (allDone) {
-            return; // All habits are done, no reminder needed
+            return;
         }
 
-        // Calculate time until reminder
         const [hours, minutes] = profile.reminderTime.split(':').map(Number);
         const now = new Date();
         const reminderDate = new Date();
         reminderDate.setHours(hours, minutes, 0, 0);
 
         if (now > reminderDate) {
-            return; // Reminder time for today has already passed
+            return;
         }
 
         const timeoutMs = reminderDate.getTime() - now.getTime();
@@ -1149,48 +1154,57 @@ const App = () => {
     }
 
     return (
-        <div className="max-w-md mx-auto bg-gray-900 min-h-screen flex flex-col relative border-x border-gray-800 shadow-2xl">
-            <main className="flex-1">
-                {currentView === 'dashboard' && (
-                    <DashboardPage 
-                        userId={user.uid}
-                        habits={habits}
-                        completions={completions}
-                    />
-                )}
-                {currentView === 'friends' && (
-                    <FriendsPage 
-                        userId={user.uid} 
-                        handleEndFriendship={handleEndFriendship} 
-                    />
-                )}
-                {currentView === 'profile' && (
-                    <ProfilePage 
-                        profile={profile} 
-                        userId={user.uid}
-                        handleEndFriendship={handleEndFriendship} 
-                    />
-                )}
+        // --- FIX: Responsive layout container ---
+        <div className="bg-gray-900 min-h-screen">
+            {/* --- FIX: Main content area with sidebar spacing --- */}
+            <main className="flex-1 md:ml-20"> 
+                {/* This is where we constrain the content on desktop,
+                  not the whole page.
+                */}
+                <div className="max-w-md mx-auto bg-gray-900 min-h-screen flex flex-col relative border-x border-gray-800 shadow-2xl">
+                    {currentView === 'dashboard' && (
+                        <DashboardPage 
+                            userId={user.uid}
+                            habits={habits}
+                            completions={completions}
+                        />
+                    )}
+                    {currentView === 'friends' && (
+                        <FriendsPage 
+                            userId={user.uid} 
+                            handleEndFriendship={handleEndFriendship} 
+                        />
+                    )}
+                    {currentView === 'profile' && (
+                        <ProfilePage 
+                            profile={profile} 
+                            userId={user.uid}
+                            handleEndFriendship={handleEndFriendship} 
+                        />
+                    )}
+                </div>
             </main>
             
-            <nav className="fixed bottom-0 left-0 right-0 h-20 bg-gray-900 border-t border-gray-800 flex justify-around items-center max-w-md mx-auto z-50">
+            {/* --- FIX: Responsive Nav Bar --- */}
+            <nav className="fixed bottom-0 left-0 right-0 h-20 bg-gray-900 border-t border-gray-800 flex justify-around items-center z-50
+                        md:top-0 md:left-0 md:h-screen md:w-20 md:flex-col md:justify-start md:border-t-0 md:border-r">
                 <button
                     onClick={() => setCurrentView('dashboard')}
-                    className={`flex flex-col items-center justify-center h-full px-4 ${currentView === 'dashboard' ? 'text-orange-500' : 'text-gray-500'}`}
+                    className={`flex flex-col items-center justify-center h-full px-4 md:h-20 md:w-full ${currentView === 'dashboard' ? 'text-orange-500' : 'text-gray-500'}`}
                 >
                     <LayoutDashboard className="w-6 h-6" />
                     <span className="text-xs mt-1">Dashboard</span>
                 </button>
                 <button
                     onClick={() => setCurrentView('friends')}
-                    className={`flex flex-col items-center justify-center h-full px-4 ${currentView === 'friends' ? 'text-orange-500' : 'text-gray-500'}`}
+                    className={`flex flex-col items-center justify-center h-full px-4 md:h-20 md:w-full ${currentView === 'friends' ? 'text-orange-500' : 'text-gray-500'}`}
                 >
                     <Users className="w-6 h-6" />
                     <span className="text-xs mt-1">Friends</span>
                 </button>
                 <button
                     onClick={() => setCurrentView('profile')}
-                    className={`flex flex-col items-center justify-center h-full px-4 ${currentView === 'profile' ? 'text-orange-500' : 'text-gray-500'}`}
+                    className={`flex flex-col items-center justify-center h-full px-4 md:h-20 md:w-full ${currentView === 'profile' ? 'text-orange-500' : 'text-gray-500'}`}
                 >
                     <User className="w-6 h-6" />
                     <span className="text-xs mt-1">Profile</span>
