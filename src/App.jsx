@@ -8,6 +8,7 @@ import 'firebase/compat/firestore';
 // --- 1. CONFIGURATION ---
 
 // --- Firebase Initialization ---
+// ✅ SECURE: Keys are loaded from environment variables
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -268,8 +269,11 @@ function DashboardPage({ userId, habits, completions }) {
   const [newHabit, setNewHabit] = useState('');
   const [reorder, setReorder] = useState(false);
 
-  // Refresh icons when modal or list changes
-  useEffect(() => { window.lucide.createIcons(); }, [showAdd, reorder, habits]);
+  // --- BUG FIX ---
+  // Refresh icons only when list length changes, not on every toggle
+  useEffect(() => { 
+      window.lucide.createIcons(); 
+  }, [showAdd, reorder, habits.length]);
   
   const todayStr = getISODateString(new Date());
 
@@ -342,11 +346,7 @@ function DashboardPage({ userId, habits, completions }) {
   };
 
   const move = (index, dir) => {
-      // Note: This local-only move is for UI. For persistent reordering,
-      // you would update the 'order' field in Firebase for the affected habits.
-      // For simplicity, we'll keep the non-persistent move from the original.
       console.warn("Move functionality is local-only for this demo.");
-      // A full implementation would be more complex, so we skip it here.
   };
 
   const activeCount = habits.filter(h => h.currentStreak > 0).length;
@@ -453,6 +453,7 @@ function DashboardPage({ userId, habits, completions }) {
   );
 }
 
+// --- THIS IS THE FULLY UPDATED FRIENDS PAGE ---
 function FriendsPage({ profile, userId }) {
   const [leaderboard, setLeaderboard] = useState([]);
   const [friendEmail, setFriendEmail] = useState('');
@@ -460,15 +461,19 @@ function FriendsPage({ profile, userId }) {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
 
+  const [receivedRequests, setReceivedRequests] = useState([]);
+  const [sentRequests, setSentRequests] = useState([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
+
+  // --- 1. Main Leaderboard Fetcher ---
   const fetchFriendData = useCallback(async () => {
     if (!profile) return;
     setLoading(true);
     try {
       let friendIds = profile.friends || [];
-      let allUserIds = [...friendIds, userId]; // Include self in leaderboard
+      let allUserIds = [...friendIds, userId];
       
       let leaderboardData = [];
-
       for (const uid of allUserIds) {
           const userProfileSnap = await db.collection("profiles").doc(uid).get();
           if (!userProfileSnap.exists) continue;
@@ -476,15 +481,15 @@ function FriendsPage({ profile, userId }) {
           const userProfile = userProfileSnap.data();
           const habitsSnapshot = await db.collection("users").doc(uid).collection("habits").get();
           
-          let totalMaxStreak = 0;
+          let totalCurrentStreak = 0;
           habitsSnapshot.forEach(doc => {
-              totalMaxStreak += (doc.data().maxStreak || 0);
+              totalCurrentStreak += (doc.data().currentStreak || 0);
           });
           
-          leaderboardData.push({ ...userProfile, totalMaxStreak });
+          leaderboardData.push({ ...userProfile, totalScore: totalCurrentStreak });
       }
       
-      leaderboardData.sort((a, b) => b.totalMaxStreak - a.totalMaxStreak);
+      leaderboardData.sort((a, b) => b.totalScore - a.totalScore);
       setLeaderboard(leaderboardData);
 
     } catch (e) {
@@ -494,15 +499,70 @@ function FriendsPage({ profile, userId }) {
     setLoading(false);
   }, [profile, userId]);
 
+  // --- 2. Friend Request Fetcher ---
+  const fetchRequests = useCallback(async () => {
+    if (!userId) return;
+    setLoadingRequests(true);
+    
+    const receivedQuery = db.collection("friendRequests")
+      .where('receiverId', '==', userId)
+      .where('status', '==', 'pending');
+      
+    const sentQuery = db.collection("friendRequests")
+      .where('senderId', '==', userId)
+      .where('status', '==', 'pending');
+
+    const getProfilesForRequests = async (snapshot, idField) => {
+        const requests = [];
+        for (const doc of snapshot.docs) {
+            const request = doc.data();
+            const profileSnap = await db.collection("profiles").doc(request[idField]).get();
+            if (profileSnap.exists) {
+                requests.push({
+                    requestId: doc.id,
+                    ...profileSnap.data()
+                });
+            }
+        }
+        return requests;
+    };
+
+    try {
+        const [receivedSnap, sentSnap] = await Promise.all([
+            receivedQuery.get(),
+            sentQuery.get()
+        ]);
+        
+        const received = await getProfilesForRequests(receivedSnap, 'senderId');
+        const sent = await getProfilesForRequests(sentSnap, 'receiverId');
+        
+        setReceivedRequests(received);
+        setSentRequests(sent);
+
+    } catch (e) {
+        console.error("Error fetching requests:", e);
+        setError("Could not load friend requests.");
+    }
+    setLoadingRequests(false);
+  }, [userId]);
+
+  // --- 3. useEffects to run fetchers ---
   useEffect(() => {
     fetchFriendData();
   }, [fetchFriendData]);
-  
-  useEffect(() => { window.lucide.createIcons(); }, [loading, leaderboard]);
 
+  useEffect(() => {
+    fetchRequests();
+  }, [fetchRequests]);
+  
+  useEffect(() => { 
+      window.lucide.createIcons(); 
+  }, [loading, leaderboard, loadingRequests, receivedRequests, sentRequests]);
+
+  // --- 4. Handler Functions ---
   const handleAddFriend = async (e) => {
     e.preventDefault();
-    if (!friendEmail) return;
+    if (!friendEmail.trim()) return;
     setError(null);
     setMessage(null);
     
@@ -515,29 +575,85 @@ function FriendsPage({ profile, userId }) {
       if (friendProfile.uid === userId) throw new Error("You can't add yourself.");
       if (profile.friends.includes(friendProfile.uid)) throw new Error("Already friends.");
       
-      // Add friend to self
-      await db.collection("profiles").doc(userId).update({
-        friends: firebase.firestore.FieldValue.arrayUnion(friendProfile.uid)
-      });
-      // Add self to friend
-      await db.collection("profiles").doc(friendProfile.uid).update({
-        friends: firebase.firestore.FieldValue.arrayUnion(userId)
+      const existingReqQuery = db.collection("friendRequests")
+          .where('senderId', '==', userId)
+          .where('receiverId', '==', friendProfile.uid);
+      const existingReqSnap = await existingReqQuery.get();
+      if (!existingReqSnap.empty) throw new Error("Request already sent.");
+
+      await db.collection("friendRequests").add({
+          senderId: userId,
+          receiverId: friendProfile.uid,
+          status: "pending",
+          createdAt: new Date()
       });
       
-      setMessage("Friend added!");
+      setMessage("Friend request sent!");
       setFriendEmail('');
-      fetchFriendData();
+      fetchRequests(); 
     } catch (e) {
-      console.error("Error adding friend: ", e);
+      console.error("Error adding friend:", e);
       setError(e.message);
     }
   };
 
-  return (
-    <div className="p-4 pb-24">
-      <h1 className="text-3xl font-bold text-white mb-6">Friends</h1>
+  const handleAcceptRequest = async (senderId, requestId) => {
+      try {
+          await db.collection("profiles").doc(userId).update({
+              friends: firebase.firestore.FieldValue.arrayUnion(senderId)
+          });
+          await db.collection("profiles").doc(senderId).update({
+              friends: firebase.firestore.FieldValue.arrayUnion(userId)
+          });
+          await db.collection("friendRequests").doc(requestId).update({
+              status: "accepted"
+          });
+          
+          fetchRequests(); 
+          // No need to call fetchFriendData(), the profile snapshot listener in App.jsx will do it.
+      } catch (e) {
+          console.error("Error accepting request:", e);
+          setError("Failed to accept request.");
+      }
+  };
+
+  const handleDeleteRequest = async (requestId) => {
+      try {
+          await db.collection("friendRequests").doc(requestId).delete();
+          fetchRequests();
+      } catch (e) {
+          console.error("Error deleting request:", e);
+          setError("Failed to delete request.");
+      }
+  };
+
+  const handleRemoveFriend = async (friendUid) => {
+      if (!confirm('Are you sure you want to remove this friend?')) return;
       
-      <div className="bg-gray-800 p-6 rounded-xl shadow-lg mb-6 border border-gray-700">
+      try {
+          // Remove friend from self
+          await db.collection("profiles").doc(userId).update({
+              friends: firebase.firestore.FieldValue.arrayRemove(friendUid)
+          });
+          // Remove self from friend
+          await db.collection("profiles").doc(friendUid).update({
+              friends: firebase.firestore.FieldValue.arrayRemove(userId)
+          });
+          
+          // The snapshot listener in App.jsx will automatically
+          // update the profile and trigger a re-fetch of the leaderboard.
+      } catch (e) {
+          console.error("Error removing friend:", e);
+          setError("Failed to remove friend.");
+      }
+  };
+
+  // --- 5. Render JSX ---
+  return (
+    <div className="p-4 pb-24 space-y-6">
+      <h1 className="text-3xl font-bold text-white">Friends</h1>
+      
+      <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
         <h2 className="text-xl font-bold mb-3">Add Friend</h2>
         <form onSubmit={handleAddFriend} className="flex gap-2">
           <input
@@ -556,9 +672,47 @@ function FriendsPage({ profile, userId }) {
       </div>
 
       <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+        <h2 className="text-xl font-bold mb-4">Friend Requests</h2>
+        {loadingRequests ? <LoadingSpinner /> : (
+            <div className="space-y-4">
+                {receivedRequests.length > 0 && (
+                    <div className="space-y-2">
+                        <h3 className="text-sm font-semibold text-gray-400">Received</h3>
+                        {receivedRequests.map(user => (
+                            <div key={user.uid} className="flex items-center gap-3 p-3 rounded-lg bg-gray-900">
+                                <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full" />
+                                <span className="flex-grow font-semibold">{user.displayName}</span>
+                                <button onClick={() => handleDeleteRequest(user.requestId)} className="p-2 text-gray-500 hover:text-red-500"><i data-lucide="x" className="w-5 h-5"></i></button>
+                                <button onClick={() => handleAcceptRequest(user.uid, user.requestId)} className="p-2 text-gray-500 hover:text-green-500"><i data-lucide="check" className="w-5 h-5"></i></button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {sentRequests.length > 0 && (
+                    <div className="space-y-2">
+                        <h3 className="text-sm font-semibold text-gray-400">Sent</h3>
+                        {sentRequests.map(user => (
+                            <div key={user.uid} className="flex items-center gap-3 p-3 rounded-lg bg-gray-900">
+                                <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full" />
+                                <span className="flex-grow font-semibold">{user.displayName}</span>
+                                <button onClick={() => handleDeleteRequest(user.requestId)} className="p-2 text-gray-500 hover:text-red-500">
+                                    <i data-lucide="x-circle" className="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {receivedRequests.length === 0 && sentRequests.length === 0 && (
+                    <p className="text-gray-500 text-sm">No pending friend requests.</p>
+                )}
+            </div>
+        )}
+      </div>
+
+      <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
         <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
           <i data-lucide="trophy" className="text-yellow-500"></i>
-          Leaderboard
+          Leaderboard (Current Streaks)
         </h2>
         {loading ? (
           <LoadingSpinner />
@@ -567,7 +721,7 @@ function FriendsPage({ profile, userId }) {
         ) : (
           <ul className="space-y-3">
             {leaderboard.map((user, index) => (
-              <li key={user.uid} className="flex items-center gap-4 p-3 rounded-lg bg-gray-900">
+              <li key={user.uid} className="flex items-center gap-3 p-3 rounded-lg bg-gray-900">
                 <span className="font-bold text-lg w-6">
                   {index === 0 ? '🥇' : (index === 1 ? '🥈' : (index === 2 ? '🥉' : `${index + 1}`))}
                 </span>
@@ -582,8 +736,18 @@ function FriendsPage({ profile, userId }) {
                   </p>
                 </div>
                 <span className="font-bold text-lg text-orange-400">
-                  {user.totalMaxStreak} 🔥
+                  {user.totalScore} 🔥
                 </span>
+
+                {user.uid !== userId && (
+                    <button 
+                        onClick={() => handleRemoveFriend(user.uid)} 
+                        className="p-2 text-gray-600 hover:text-red-500"
+                        title="Remove friend"
+                    >
+                        <i data-lucide="user-x" className="w-5 h-5"></i>
+                    </button>
+                )}
               </li>
             ))}
           </ul>
@@ -592,6 +756,8 @@ function FriendsPage({ profile, userId }) {
     </div>
   );
 }
+// --- END OF UPDATED FRIENDS PAGE ---
+
 
 function ProfilePage({ profile }) {
     useEffect(() => { window.lucide.createIcons(); }, []);
@@ -669,7 +835,7 @@ const App = () => {
             });
 
         const unsubHabits = db.collection("users").doc(user.uid).collection("habits")
-            .orderBy("order", "asc") // Note: 'order' field needs to be managed for this to work
+            .orderBy("order", "asc") 
             .onSnapshot((snapshot) => {
                 setHabits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             });
@@ -695,12 +861,16 @@ const App = () => {
         };
     }, [user, isAuthReady]);
 
-    // --- Icon Refresher ---
+    // --- Icon Refresher (BUG FIX) ---
     useEffect(() => {
-        // This is the magic from your original file.
-        // We call it on every major state change to redraw icons.
         window.lucide.createIcons();
-    }, [currentView, profile, habits, completions, isAuthReady]);
+    }, [
+        currentView, 
+        profile, 
+        isAuthReady,
+        habits.length, // Only re-run when habits are added/removed
+        completions.length // Only re-run when completions are added/removed
+    ]);
 
     // --- Render Logic ---
     
