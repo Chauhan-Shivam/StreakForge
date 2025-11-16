@@ -85,7 +85,6 @@ const calculateStreaks = (dateStrings) => {
   return { currentStreak, maxStreak };
 };
 
-// This function now lives in App.jsx but is called from DashboardPage
 const updateProfileScore = async (userId) => {
     try {
         const habitsSnapshot = await db.collection("users").doc(userId).collection("habits").get();
@@ -338,7 +337,7 @@ function DashboardPage({ userId, habits, completions }) {
             maxStreak
         });
         
-        await updateProfileScore(userId); // Update score on profile
+        await updateProfileScore(userId);
 
     } catch (error) {
         console.error("Error toggling habit: ", error);
@@ -358,7 +357,7 @@ function DashboardPage({ userId, habits, completions }) {
           });
           await Promise.all(deletePromises);
           
-          await updateProfileScore(userId); // Update score on profile
+          await updateProfileScore(userId);
 
       } catch (error) {
           console.error("Error deleting habit: ", error);
@@ -373,7 +372,6 @@ function DashboardPage({ userId, habits, completions }) {
 
   return (
     <div className="pb-24">
-        {/* Header */}
         <div className="p-4 flex justify-between items-center bg-gray-900/90 backdrop-blur sticky top-0 z-10 border-b border-white/10">
             <div className="flex items-center gap-2">
                 <div className="bg-orange-500 p-1.5 rounded">
@@ -386,7 +384,6 @@ function DashboardPage({ userId, habits, completions }) {
             </button>
         </div>
 
-        {/* Stats */}
         {!reorder && (
             <div className="p-4">
                 <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-5 border border-white/10 shadow-lg relative overflow-hidden">
@@ -401,7 +398,6 @@ function DashboardPage({ userId, habits, completions }) {
             </div>
         )}
 
-        {/* List */}
         <div className="flex-1 p-4 space-y-3">
             {habits.length === 0 && (
                 <div className="text-center py-10 text-gray-500">
@@ -450,14 +446,12 @@ function DashboardPage({ userId, habits, completions }) {
             })}
         </div>
 
-        {/* Add Button */}
         {!reorder && (
             <button onClick={() => setShowAdd(true)} className="fixed bottom-24 right-6 w-14 h-14 bg-orange-500 rounded-full shadow-2xl flex items-center justify-center text-white hover:bg-orange-600 transition-transform active:scale-90 z-50">
                 <i data-lucide="plus" className="w-8 h-8"></i>
             </button>
         )}
 
-        {/* Modal */}
         {showAdd && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end justify-center" onClick={() => setShowAdd(false)}>
                 <div className="bg-gray-900 w-full max-w-md rounded-t-3xl p-6 border-t border-gray-800" onClick={e => e.stopPropagation()}>
@@ -473,8 +467,7 @@ function DashboardPage({ userId, habits, completions }) {
   );
 }
 
-// --- FriendsPage now takes handleRemoveFriend as a prop ---
-function FriendsPage({ profile, userId, handleRemoveFriend }) {
+function FriendsPage({ userId, handleEndFriendship }) {
   const [leaderboard, setLeaderboard] = useState([]);
   const [friendEmail, setFriendEmail] = useState('');
   const [loading, setLoading] = useState(true);
@@ -485,25 +478,35 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
   const [sentRequests, setSentRequests] = useState([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
 
-  // --- 1. Main Leaderboard Fetcher ---
   const fetchFriendData = useCallback(async () => {
-    if (!profile) return;
+    if (!userId) return;
     setLoading(true);
-    setError(null); // Clear previous errors
+    setError(null);
     try {
-      let friendIds = profile.friends || [];
-      let allUserIds = [...friendIds, userId];
+      const sentQuery = db.collection("friendRequests").where('senderId', '==', userId).where('status', '==', 'accepted');
+      const recvQuery = db.collection("friendRequests").where('receiverId', '==', userId).where('status', '==', 'accepted');
+      
+      const [sentSnap, recvSnap] = await Promise.all([sentQuery.get(), recvQuery.get()]);
+      
+      const friends = [];
+      sentSnap.forEach(doc => friends.push({ uid: doc.data().receiverId, requestId: doc.id }));
+      recvSnap.forEach(doc => friends.push({ uid: doc.data().senderId, requestId: doc.id }));
+      
+      const allUsers = [...friends, { uid: userId, requestId: null }];
       
       let leaderboardData = [];
-      for (const uid of allUserIds) {
-          const userProfileSnap = await db.collection("profiles").doc(uid).get();
+      for (const user of allUsers) {
+          const userProfileSnap = await db.collection("profiles").doc(user.uid).get();
           if (!userProfileSnap.exists) continue;
           
           const userProfile = userProfileSnap.data();
-          // Read the score from the public profile
           const totalCurrentStreak = userProfile.totalScore || 0;
           
-          leaderboardData.push({ ...userProfile, totalScore: totalCurrentStreak });
+          leaderboardData.push({ 
+              ...userProfile, 
+              totalScore: totalCurrentStreak,
+              requestId: user.requestId
+          });
       }
       
       leaderboardData.sort((a, b) => b.totalScore - a.totalScore);
@@ -511,12 +514,11 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
 
     } catch (e) {
       console.error("Error fetching friend data: ", e);
-      setError("Could not load friend data. Check security rules.");
+      setError("Could not load friend data.");
     }
     setLoading(false);
-  }, [profile, userId]);
+  }, [userId]);
 
-  // --- 2. Friend Request Fetcher ---
   const fetchRequests = useCallback(async () => {
     if (!userId) return;
     setLoadingRequests(true);
@@ -557,26 +559,21 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
         setSentRequests(sent);
 
     } catch (e) {
-        console.error("Error fetching requests:", e);
-        setError("Could not load friend requests.");
+      console.error("Error fetching requests:", e);
+      setError("Could not load friend requests.");
     }
     setLoadingRequests(false);
   }, [userId]);
 
-  // --- 3. useEffects to run fetchers ---
   useEffect(() => {
     fetchFriendData();
-  }, [fetchFriendData]);
-
-  useEffect(() => {
     fetchRequests();
-  }, [fetchRequests]);
+  }, [fetchFriendData, fetchRequests]); // Run both on initial load
   
   useEffect(() => { 
       window.lucide.createIcons(); 
   }, [loading, leaderboard, loadingRequests, receivedRequests, sentRequests]);
 
-  // --- 4. Handler Functions ---
   const handleAddFriend = async (e) => {
     e.preventDefault();
     if (!friendEmail.trim()) return;
@@ -590,13 +587,17 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
       if (querySnapshot.empty) throw new Error("User not found.");
       const friendProfile = querySnapshot.docs[0].data();
       if (friendProfile.uid === userId) throw new Error("You can't add yourself.");
-      if (profile.friends.includes(friendProfile.uid)) throw new Error("Already friends.");
       
-      const existingReqQuery = db.collection("friendRequests")
+      const existingReqQuery1 = db.collection("friendRequests")
           .where('senderId', '==', userId)
           .where('receiverId', '==', friendProfile.uid);
-      const existingReqSnap = await existingReqQuery.get();
-      if (!existingReqSnap.empty) throw new Error("Request already sent.");
+      const existingReqQuery2 = db.collection("friendRequests")
+          .where('senderId', '==', friendProfile.uid)
+          .where('receiverId', '==', userId);
+
+      const [existingSnap1, existingSnap2] = await Promise.all([existingReqQuery1.get(), existingReqQuery2.get()]);
+
+      if (!existingSnap1.empty || !existingSnap2.empty) throw new Error("You are already friends or a request is pending.");
 
       await db.collection("friendRequests").add({
           senderId: userId,
@@ -614,38 +615,26 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
     }
   };
 
-  const handleAcceptRequest = async (senderId, requestId) => {
+  const handleAcceptRequest = async (requestId) => {
       try {
-          await db.collection("profiles").doc(userId).update({
-              friends: firebase.firestore.FieldValue.arrayUnion(senderId)
-          });
-          await db.collection("profiles").doc(senderId).update({
-              friends: firebase.firestore.FieldValue.arrayUnion(userId)
-          });
           await db.collection("friendRequests").doc(requestId).update({
               status: "accepted"
           });
           
           fetchRequests(); 
+          fetchFriendData(); 
       } catch (e) {
           console.error("Error accepting request:", e);
           setError("Failed to accept request.");
       }
   };
 
-  const handleDeleteRequest = async (requestId) => {
-      try {
-          await db.collection("friendRequests").doc(requestId).delete();
-          fetchRequests();
-      } catch (e) {
-          console.error("Error deleting request:", e);
-          setError("Failed to delete request.");
-      }
+  const handleEndFriendshipProxy = async (requestId, actionType) => {
+      await handleEndFriendship(requestId, actionType);
+      fetchRequests();
+      fetchFriendData();
   };
 
-  // handleRemoveFriend is now passed in as a prop
-  
-  // --- 5. Render JSX ---
   return (
     <div className="p-4 pb-24 space-y-6">
       <h1 className="text-3xl font-bold text-white">Friends</h1>
@@ -679,8 +668,8 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
                             <div key={user.uid} className="flex items-center gap-3 p-3 rounded-lg bg-gray-900">
                                 <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full" />
                                 <span className="flex-grow font-semibold">{user.displayName}</span>
-                                <button onClick={() => handleDeleteRequest(user.requestId)} className="p-2 text-gray-500 hover:text-red-500"><i data-lucide="x" className="w-5 h-5"></i></button>
-                                <button onClick={() => handleAcceptRequest(user.uid, user.requestId)} className="p-2 text-gray-500 hover:text-green-500"><i data-lucide="check" className="w-5 h-5"></i></button>
+                                <button onClick={() => handleEndFriendshipProxy(user.requestId, 'Decline')} className="p-2 text-gray-500 hover:text-red-500"><i data-lucide="x" className="w-5 h-5"></i></button>
+                                <button onClick={() => handleAcceptRequest(user.requestId)} className="p-2 text-gray-500 hover:text-green-500"><i data-lucide="check" className="w-5 h-5"></i></button>
                             </div>
                         ))}
                     </div>
@@ -692,7 +681,7 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
                             <div key={user.uid} className="flex items-center gap-3 p-3 rounded-lg bg-gray-900">
                                 <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full" />
                                 <span className="flex-grow font-semibold">{user.displayName}</span>
-                                <button onClick={() => handleDeleteRequest(user.requestId)} className="p-2 text-gray-500 hover:text-red-500">
+                                <button onClick={() => handleEndFriendshipProxy(user.requestId, 'Cancel')} className="p-2 text-gray-500 hover:text-red-500">
                                     <i data-lucide="x-circle" className="w-5 h-5"></i>
                                 </button>
                             </div>
@@ -738,7 +727,7 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
 
                 {user.uid !== userId && (
                     <button 
-                        onClick={() => handleRemoveFriend(user.uid)} 
+                        onClick={() => handleEndFriendshipProxy(user.requestId, 'Remove')} 
                         className="p-2 text-gray-600 hover:text-red-500"
                         title="Remove friend"
                     >
@@ -754,36 +743,50 @@ function FriendsPage({ profile, userId, handleRemoveFriend }) {
   );
 }
 
-function ProfilePage({ profile, handleRemoveFriend }) {
+function ProfilePage({ profile, userId, handleEndFriendship }) {
     const [friendList, setFriendList] = useState([]);
     const [loadingFriends, setLoadingFriends] = useState(true);
 
-    // This hook fetches the full profiles for your friends
+    // fetch the full profiles for your friends
+    const fetchFriendProfiles = useCallback(async () => {
+        if (!userId) return;
+
+        setLoadingFriends(true);
+        
+        const sentQuery = db.collection("friendRequests").where('senderId', '==', userId).where('status', '==', 'accepted');
+        const recvQuery = db.collection("friendRequests").where('receiverId', '==', userId).where('status', '==', 'accepted');
+        
+        const [sentSnap, recvSnap] = await Promise.all([sentQuery.get(), recvQuery.get()]);
+        
+        const friends = [];
+        sentSnap.forEach(doc => friends.push({ uid: doc.data().receiverId, requestId: doc.id }));
+        recvSnap.forEach(doc => friends.push({ uid: doc.data().senderId, requestId: doc.id }));
+
+        if (friends.length === 0) {
+             setLoadingFriends(false);
+             setFriendList([]);
+             return;
+        }
+
+        const friendProfiles = [];
+        for (const friend of friends) {
+            const docSnap = await db.collection("profiles").doc(friend.uid).get();
+            if (docSnap.exists) {
+                friendProfiles.push({
+                    ...docSnap.data(),
+                    requestId: friend.requestId
+                });
+            }
+        }
+        setFriendList(friendProfiles);
+        setLoadingFriends(false);
+    }, [userId]);
+    
     useEffect(() => {
-        const fetchFriendProfiles = async () => {
-            if (!profile || !profile.friends || profile.friends.length === 0) {
-                setLoadingFriends(false);
-                setFriendList([]);
-                return;
-            }
-
-            setLoadingFriends(true);
-            const friendProfiles = [];
-            for (const friendId of profile.friends) {
-                const docSnap = await db.collection("profiles").doc(friendId).get();
-                if (docSnap.exists) {
-                    friendProfiles.push(docSnap.data());
-                }
-            }
-            setFriendList(friendProfiles);
-            setLoadingFriends(false);
-        };
-
         fetchFriendProfiles();
-    }, [profile]); // Re-run when the profile (and its friends list) changes
+    }, [fetchFriendProfiles]);
 
     useEffect(() => { 
-        // We need to call createIcons when the new friend list is rendered
         window.lucide.createIcons();
     }, [friendList, loadingFriends]);
     
@@ -793,6 +796,12 @@ function ProfilePage({ profile, handleRemoveFriend }) {
         } catch (error) {
             console.error("Error signing out:", error);
         }
+    };
+
+    // This proxy handler calls the prop and then re-fetches the list
+    const handleRemoveFriendProxy = async (requestId, actionType) => {
+        await handleEndFriendship(requestId, actionType);
+        fetchFriendProfiles(); // Re-fetch the list
     };
 
     if (!profile) {
@@ -820,7 +829,7 @@ function ProfilePage({ profile, handleRemoveFriend }) {
                     Sign Out
                 </button>
             </div>
-          
+
             <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
                 <h2 className="text-xl font-bold mb-4">Your Friends</h2>
                 {loadingFriends ? (
@@ -840,7 +849,7 @@ function ProfilePage({ profile, handleRemoveFriend }) {
                                     <p className="font-semibold">{friend.displayName}</p>
                                 </div>
                                 <button 
-                                    onClick={() => handleRemoveFriend(friend.uid)} 
+                                    onClick={() => handleRemoveFriendProxy(friend.requestId, 'Remove')} 
                                     className="p-2 text-gray-600 hover:text-red-500"
                                     title="Remove friend"
                                 >
@@ -922,23 +931,31 @@ const App = () => {
         currentView, 
         profile, 
         isAuthReady,
-        habits.length,
-        completions.length
+        habits.length
     ]);
 
-    const handleRemoveFriend = async (friendUid) => {
+    useEffect(() => {
+        if (!isAuthReady) return; 
+        const timer = setTimeout(() => {
+            window.lucide.createIcons();
+        }, 0);
+
+        return () => clearTimeout(timer);
+    }, [completions, isAuthReady]);
+
+    const handleEndFriendship = async (requestId, actionType = 'Remove') => {
         if (!user) return;
-        if (!confirm('Are you sure you want to remove this friend?')) return;
+        
+        const confirmMessage = actionType === 'Remove'
+            ? 'Are you sure you want to remove this friend?'
+            : (actionType === 'Cancel' ? 'Are you sure you want to cancel this request?' : 'Decline this request?');
+        
+        if (!confirm(confirmMessage)) return;
         
         try {
-            await db.collection("profiles").doc(user.uid).update({
-                friends: firebase.firestore.FieldValue.arrayRemove(friendUid)
-            });
-            await db.collection("profiles").doc(friendUid).update({
-                friends: firebase.firestore.FieldValue.arrayRemove(user.uid)
-            });
+            await db.collection("friendRequests").doc(requestId).delete();
         } catch (e) {
-            console.error("Error removing friend:", e);
+            console.error(`Error ${actionType.toLowerCase()}ing friend:`, e);
         }
     };
 
@@ -961,19 +978,17 @@ const App = () => {
                         completions={completions}
                     />
                 )}
-                {/* --- Pass handleRemoveFriend as a prop --- */}
                 {currentView === 'friends' && (
                     <FriendsPage 
-                        profile={profile} 
                         userId={user.uid} 
-                        handleRemoveFriend={handleRemoveFriend} 
+                        handleEndFriendship={handleEndFriendship} 
                     />
                 )}
-                {/* --- Pass handleRemoveFriend as a prop --- */}
                 {currentView === 'profile' && (
                     <ProfilePage 
                         profile={profile} 
-                        handleRemoveFriend={handleRemoveFriend} 
+                        userId={user.uid}
+                        handleEndFriendship={handleEndFriendship} 
                     />
                 )}
             </main>
