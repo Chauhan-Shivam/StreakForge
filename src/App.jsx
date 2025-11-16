@@ -1,13 +1,19 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 
-// Firebase SDKs - imported from the npm package
+// Firebase SDKs
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
+import 'firebase/compat/storage';
+
+//Icons
+import {
+  Flame, Trophy, Check, Trash2, List, ArrowUp, ArrowDown, Calendar, Plus,
+  ShieldAlert, LogOut, User, Users, LayoutDashboard, Edit3, UserX, XCircle, X
+} from 'lucide-react';
 
 // --- 1. CONFIGURATION ---
 
-// --- Firebase Initialization ---
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -17,23 +23,17 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase
 const app = firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+const storage = firebase.storage();
 
 // --- 2. HELPER FUNCTIONS ---
 
-/**
- * Formats a Date object into a 'YYYY-MM-DD' string.
- */
 const getISODateString = (date) => {
   return date.toISOString().split('T')[0];
 };
 
-/**
- * Calculates current and max streaks from a list of completion dates.
- */
 const calculateStreaks = (dateStrings) => {
   if (dateStrings.length === 0) {
     return { currentStreak: 0, maxStreak: 0 };
@@ -45,10 +45,7 @@ const calculateStreaks = (dateStrings) => {
   yesterday.setDate(today.getDate() - 1);
   const yesterdayStr = getISODateString(yesterday);
 
-  let currentStreak = 0;
-  let maxStreak = 0;
-  let tempStreak = 0;
-
+  let currentStreak = 0, maxStreak = 0, tempStreak = 0;
   let lastDateStr = sortedDates[sortedDates.length - 1];
   
   if (lastDateStr === todayStr || lastDateStr === yesterdayStr) {
@@ -101,6 +98,16 @@ const updateProfileScore = async (userId) => {
     }
 };
 
+// --- NEW: Notification Helper ---
+const showNotification = (title, body) => {
+    if (Notification.permission === 'granted') {
+        new Notification(title, {
+            body: body,
+            icon: '/logo.png'
+        });
+    }
+};
+
 // --- 3. REUSABLE COMPONENTS ---
 
 function LoadingSpinner({ fullScreen = false }) {
@@ -138,8 +145,6 @@ function AuthPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { window.lucide.createIcons(); }, [error]);
-
   const handleGoogleSignIn = async () => {
     setLoading(true);
     setError(null);
@@ -156,9 +161,9 @@ function AuthPage() {
           email: user.email,
           displayName: user.displayName,
           photoURL: user.photoURL,
-          friends: [],
           createdAt: new Date(),
-          totalScore: 0
+          totalScore: 0,
+          reminderTime: null
         });
       }
     } catch (error) {
@@ -186,9 +191,9 @@ function AuthPage() {
           email: user.email,
           displayName: displayName,
           photoURL: `https://api.dicebear.com/7.x/initials/svg?seed=${displayName}`,
-          friends: [],
           createdAt: new Date(),
-          totalScore: 0
+          totalScore: 0,
+          reminderTime: null
         });
       }
     } catch (error) {
@@ -201,7 +206,7 @@ function AuthPage() {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 p-4">
       <div className="w-full max-w-md bg-gray-800 rounded-xl shadow-2xl p-8 border border-gray-700">
-        <h1 className="text-4xl font-bold text-center text-white mb-6">StreakKeeper</h1>
+        <h1 className="text-4xl font-bold text-center text-white mb-6">StreakForge</h1>
         <div className="flex mb-6 border-b border-gray-700">
           <button
             onClick={() => setIsLogin(true)}
@@ -219,7 +224,7 @@ function AuthPage() {
 
         {error && (
           <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded-lg mb-4 flex items-center">
-            <i data-lucide="shield-alert" className="w-5 h-5 mr-3"></i>
+            <ShieldAlert className="w-5 h-5 mr-3" />
             <span className="text-sm">{error}</span>
           </div>
         )}
@@ -285,10 +290,6 @@ function DashboardPage({ userId, habits, completions }) {
   const [showAdd, setShowAdd] = useState(false);
   const [newHabit, setNewHabit] = useState('');
   const [reorder, setReorder] = useState(false);
-
-  useEffect(() => { 
-      window.lucide.createIcons(); 
-  }, [showAdd, reorder, habits.length]);
   
   const todayStr = getISODateString(new Date());
 
@@ -375,12 +376,12 @@ function DashboardPage({ userId, habits, completions }) {
         <div className="p-4 flex justify-between items-center bg-gray-900/90 backdrop-blur sticky top-0 z-10 border-b border-white/10">
             <div className="flex items-center gap-2">
                 <div className="bg-orange-500 p-1.5 rounded">
-                    <i data-lucide="flame" className="text-white w-5 h-5"></i>
+                    <Flame className="text-white w-5 h-5" />
                 </div>
-                <h1 className="font-bold text-lg tracking-tight">StreakKeeper</h1>
+                <h1 className="font-bold text-lg tracking-tight">StreakForge</h1>
             </div>
             <button onClick={() => setReorder(!reorder)} className={`p-2 rounded-full ${reorder ? 'bg-orange-600' : 'bg-gray-800'}`}>
-                <i data-lucide={reorder ? "check" : "list"} className="w-5 h-5 text-white"></i>
+                {reorder ? <Check className="w-5 h-5 text-white" /> : <List className="w-5 h-5 text-white" />}
             </button>
         </div>
 
@@ -388,7 +389,7 @@ function DashboardPage({ userId, habits, completions }) {
             <div className="p-4">
                 <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-5 border border-white/10 shadow-lg relative overflow-hidden">
                     <div className="absolute -right-5 -top-5 text-white/5">
-                        <i data-lucide="flame" style={{width:120, height:120}}></i>
+                        <Flame style={{width:120, height:120}} />
                     </div>
                     <div className="relative z-10">
                         <div className="text-xs font-bold text-gray-400 uppercase mb-1">Active Streaks</div>
@@ -401,7 +402,7 @@ function DashboardPage({ userId, habits, completions }) {
         <div className="flex-1 p-4 space-y-3">
             {habits.length === 0 && (
                 <div className="text-center py-10 text-gray-500">
-                    <i data-lucide="calendar" className="w-10 h-10 mx-auto mb-2 opacity-50"></i>
+                    <Calendar className="w-10 h-10 mx-auto mb-2 opacity-50" />
                     <p>No habits yet. Add one!</p>
                 </div>
             )}
@@ -413,12 +414,12 @@ function DashboardPage({ userId, habits, completions }) {
                         
                         {reorder ? (
                             <div className="flex flex-col gap-2">
-                                <button onClick={() => move(i, 'up')} disabled={true} className="opacity-50 hover:opacity-100 disabled:opacity-10"><i data-lucide="arrow-up" className="w-4 h-4"></i></button>
-                                <button onClick={() => move(i, 'down')} disabled={true} className="opacity-50 hover:opacity-100 disabled:opacity-10"><i data-lucide="arrow-down" className="w-4 h-4"></i></button>
+                                <button onClick={() => move(i, 'up')} disabled={true} className="opacity-50 hover:opacity-100 disabled:opacity-10"><ArrowUp className="w-4 h-4" /></button>
+                                <button onClick={() => move(i, 'down')} disabled={true} className="opacity-50 hover:opacity-100 disabled:opacity-10"><ArrowDown className="w-4 h-4" /></button>
                             </div>
                         ) : (
                             <button onClick={() => toggle(h.id)} className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${isDone ? 'bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-gray-700 text-gray-500'}`}>
-                                {isDone ? <i data-lucide="check" className="w-6 h-6 stroke-[3]"></i> : <div className="w-3 h-3 bg-gray-600 rounded-full"></div>}
+                                {isDone ? <Check className="w-6 h-6 stroke-[3]" /> : <div className="w-3 h-3 bg-gray-600 rounded-full"></div>}
                             </button>
                         )}
                         
@@ -427,10 +428,10 @@ function DashboardPage({ userId, habits, completions }) {
                             {!reorder && (
                                 <div className="flex gap-3 mt-1 text-xs">
                                     <span className={`flex items-center ${h.currentStreak > 0 ? 'text-orange-400' : 'text-gray-500'}`}>
-                                        <i data-lucide="flame" className="w-3 h-3 mr-1"></i> {h.currentStreak}
+                                        <Flame className="w-3 h-3 mr-1" /> {h.currentStreak}
                                     </span>
                                     <span className="text-gray-600 flex items-center">
-                                        <i data-lucide="trophy" className="w-3 h-3 mr-1"></i> {h.maxStreak}
+                                        <Trophy className="w-3 h-3 mr-1" /> {h.maxStreak}
                                     </span>
                                 </div>
                             )}
@@ -438,7 +439,7 @@ function DashboardPage({ userId, habits, completions }) {
 
                         {!reorder && (
                             <button onClick={() => deleteHabit(h.id)} className="p-2 text-gray-600 hover:text-red-400">
-                                <i data-lucide="trash-2" className="w-5 h-5"></i>
+                                <Trash2 className="w-5 h-5" />
                             </button>
                         )}
                     </div>
@@ -448,7 +449,7 @@ function DashboardPage({ userId, habits, completions }) {
 
         {!reorder && (
             <button onClick={() => setShowAdd(true)} className="fixed bottom-24 right-6 w-14 h-14 bg-orange-500 rounded-full shadow-2xl flex items-center justify-center text-white hover:bg-orange-600 transition-transform active:scale-90 z-50">
-                <i data-lucide="plus" className="w-8 h-8"></i>
+                <Plus className="w-8 h-8" />
             </button>
         )}
 
@@ -568,11 +569,7 @@ function FriendsPage({ userId, handleEndFriendship }) {
   useEffect(() => {
     fetchFriendData();
     fetchRequests();
-  }, [fetchFriendData, fetchRequests]); // Run both on initial load
-  
-  useEffect(() => { 
-      window.lucide.createIcons(); 
-  }, [loading, leaderboard, loadingRequests, receivedRequests, sentRequests]);
+  }, [fetchFriendData, fetchRequests]);
 
   const handleAddFriend = async (e) => {
     e.preventDefault();
@@ -666,10 +663,10 @@ function FriendsPage({ userId, handleEndFriendship }) {
                         <h3 className="text-sm font-semibold text-gray-400">Received</h3>
                         {receivedRequests.map(user => (
                             <div key={user.uid} className="flex items-center gap-3 p-3 rounded-lg bg-gray-900">
-                                <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full" />
+                                <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full object-cover" />
                                 <span className="flex-grow font-semibold">{user.displayName}</span>
-                                <button onClick={() => handleEndFriendshipProxy(user.requestId, 'Decline')} className="p-2 text-gray-500 hover:text-red-500"><i data-lucide="x" className="w-5 h-5"></i></button>
-                                <button onClick={() => handleAcceptRequest(user.requestId)} className="p-2 text-gray-500 hover:text-green-500"><i data-lucide="check" className="w-5 h-5"></i></button>
+                                <button onClick={() => handleEndFriendshipProxy(user.requestId, 'Decline')} className="p-2 text-gray-500 hover:text-red-500"><X className="w-5 h-5" /></button>
+                                <button onClick={() => handleAcceptRequest(user.requestId)} className="p-2 text-gray-500 hover:text-green-500"><Check className="w-5 h-5" /></button>
                             </div>
                         ))}
                     </div>
@@ -679,10 +676,10 @@ function FriendsPage({ userId, handleEndFriendship }) {
                         <h3 className="text-sm font-semibold text-gray-400">Sent</h3>
                         {sentRequests.map(user => (
                             <div key={user.uid} className="flex items-center gap-3 p-3 rounded-lg bg-gray-900">
-                                <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full" />
+                                <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full object-cover" />
                                 <span className="flex-grow font-semibold">{user.displayName}</span>
                                 <button onClick={() => handleEndFriendshipProxy(user.requestId, 'Cancel')} className="p-2 text-gray-500 hover:text-red-500">
-                                    <i data-lucide="x-circle" className="w-5 h-5"></i>
+                                    <XCircle className="w-5 h-5" />
                                 </button>
                             </div>
                         ))}
@@ -697,7 +694,7 @@ function FriendsPage({ userId, handleEndFriendship }) {
 
       <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
         <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-          <i data-lucide="trophy" className="text-yellow-500"></i>
+          <Trophy className="text-yellow-500" />
           Leaderboard (Current Streaks)
         </h2>
         {loading ? (
@@ -714,7 +711,7 @@ function FriendsPage({ userId, handleEndFriendship }) {
                 <img 
                   src={user.photoURL} 
                   alt={user.displayName}
-                  className="w-10 h-10 rounded-full"
+                  className="w-10 h-10 rounded-full object-cover"
                 />
                 <div className="flex-grow">
                   <p className={`font-semibold ${user.uid === userId ? 'text-orange-400' : 'text-white'}`}>
@@ -724,16 +721,6 @@ function FriendsPage({ userId, handleEndFriendship }) {
                 <span className="font-bold text-lg text-orange-400">
                   {user.totalScore} 🔥
                 </span>
-
-                {user.uid !== userId && (
-                    <button 
-                        onClick={() => handleEndFriendshipProxy(user.requestId, 'Remove')} 
-                        className="p-2 text-gray-600 hover:text-red-500"
-                        title="Remove friend"
-                    >
-                        <i data-lucide="user-x" className="w-5 h-5"></i>
-                    </button>
-                )}
               </li>
             ))}
           </ul>
@@ -743,14 +730,23 @@ function FriendsPage({ userId, handleEndFriendship }) {
   );
 }
 
+// --- UPDATED PROFILE PAGE ---
 function ProfilePage({ profile, userId, handleEndFriendship }) {
     const [friendList, setFriendList] = useState([]);
     const [loadingFriends, setLoadingFriends] = useState(true);
 
-    // fetch the full profiles for your friends
+    const [showEdit, setShowEdit] = useState(false);
+    const [newDisplayName, setNewDisplayName] = useState(profile ? profile.displayName : '');
+    const [newImage, setNewImage] = useState(null);
+    const [uploading, setUploading] = useState(false);
+    const [error, setError] = useState(null);
+
+    // --- Notification State ---
+    const [notifPermission, setNotifPermission] = useState(Notification.permission);
+    const [reminderTime, setReminderTime] = useState(profile?.reminderTime || '');
+
     const fetchFriendProfiles = useCallback(async () => {
         if (!userId) return;
-
         setLoadingFriends(true);
         
         const sentQuery = db.collection("friendRequests").where('senderId', '==', userId).where('status', '==', 'accepted');
@@ -786,9 +782,13 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
         fetchFriendProfiles();
     }, [fetchFriendProfiles]);
 
-    useEffect(() => { 
-        window.lucide.createIcons();
-    }, [friendList, loadingFriends]);
+    useEffect(() => {
+      // Update local state if profile prop changes
+      if (profile) {
+        setReminderTime(profile.reminderTime || '');
+        setNewDisplayName(profile.displayName);
+      }
+    }, [profile]);
     
     const handleSignOut = async () => {
         try {
@@ -798,10 +798,73 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
         }
     };
 
-    // This proxy handler calls the prop and then re-fetches the list
     const handleRemoveFriendProxy = async (requestId, actionType) => {
         await handleEndFriendship(requestId, actionType);
-        fetchFriendProfiles(); // Re-fetch the list
+        fetchFriendProfiles();
+    };
+    
+    const handleFileChange = (e) => {
+        if (e.target.files[0]) {
+            setNewImage(e.target.files[0]);
+        }
+    };
+
+    const handleProfileUpdate = async (e) => {
+        e.preventDefault();
+        setUploading(true);
+        setError(null);
+        
+        let newPhotoURL = null;
+        
+        try {
+            if (newImage) {
+                const storageRef = storage.ref(`profile_pictures/${userId}`);
+                const uploadTask = await storageRef.put(newImage);
+                newPhotoURL = await uploadTask.ref.getDownloadURL();
+            }
+            
+            const updatedData = {};
+            if (newDisplayName.trim() && newDisplayName !== profile.displayName) {
+                updatedData.displayName = newDisplayName.trim();
+            }
+            if (newPhotoURL) {
+                updatedData.photoURL = newPhotoURL;
+            }
+
+            if (Object.keys(updatedData).length > 0) {
+                await db.collection("profiles").doc(userId).update(updatedData);
+            }
+            
+            setUploading(false);
+            setShowEdit(false);
+            setNewImage(null);
+        } catch (err) {
+            console.error("Error updating profile: ", err);
+            setError(err.message);
+            setUploading(false);
+        }
+    };
+
+    // --- Handle Notification Permission ---
+    const requestNotifPermission = async () => {
+        const permission = await Notification.requestPermission();
+        setNotifPermission(permission);
+        if (permission === 'granted') {
+            showNotification('Notifications Enabled!', 'You will now receive reminders from StreakForge.');
+        }
+    };
+
+    // --- Handle Saving Reminder Time ---
+    const handleSaveReminder = async () => {
+        try {
+            await db.collection("profiles").doc(userId).update({
+                reminderTime: reminderTime || null // Save null if empty
+            });
+            alert("Reminder time saved!");
+        } catch (err) {
+            console.error("Error saving reminder: ", err);
+            alert("Could not save reminder time.");
+        }
     };
 
     if (!profile) {
@@ -816,18 +879,67 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
                 <img 
                     src={profile.photoURL}
                     alt={profile.displayName}
-                    className="w-32 h-32 rounded-full mb-4 ring-4 ring-orange-500/50"
+                    className="w-32 h-32 rounded-full mb-4 ring-4 ring-orange-500/50 object-cover"
                 />
                 <h2 className="text-2xl font-bold text-white">{profile.displayName}</h2>
                 <p className="text-gray-400 text-lg mb-6">{profile.email}</p>
                 
                 <button
+                    onClick={() => {
+                        setShowEdit(true);
+                        setNewDisplayName(profile.displayName);
+                        setNewImage(null);
+                        setError(null);
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-700 text-white font-semibold rounded-lg shadow-md hover:bg-gray-600 transition-all mb-3"
+                >
+                    <Edit3 className="w-5 h-5" />
+                    Edit Profile
+                </button>
+                
+                <button
                     onClick={handleSignOut}
                     className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 transition-all"
                 >
-                    <i data-lucide="log-out" className="w-5 h-5"></i>
+                    <LogOut className="w-5 h-5" />
                     Sign Out
                 </button>
+            </div>
+            
+            {/* --- NEW: Notification Settings --- */}
+            <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                <h2 className="text-xl font-bold mb-4">Notifications</h2>
+                {notifPermission === 'default' && (
+                    <button 
+                        onClick={requestNotifPermission}
+                        className="w-full bg-blue-500 py-3 rounded-xl font-bold text-lg"
+                    >
+                        Enable Reminders
+                    </button>
+                )}
+                {notifPermission === 'denied' && (
+                    <p className="text-red-400">You have blocked notifications. You must enable them in your browser settings.</p>
+                )}
+                {notifPermission === 'granted' && (
+                    <div className="space-y-3">
+                        <p className="text-green-400">Notifications are enabled!</p>
+                        <div>
+                            <label className="text-sm font-medium text-gray-400">Daily Reminder Time</label>
+                            <input 
+                                type="time"
+                                value={reminderTime}
+                                onChange={(e) => setReminderTime(e.target.value)}
+                                className="w-full bg-black border border-gray-800 rounded-xl p-3 mt-1 focus:border-orange-500"
+                            />
+                        </div>
+                        <button 
+                            onClick={handleSaveReminder}
+                            className="w-full bg-orange-500 py-3 rounded-xl font-bold text-lg"
+                        >
+                            Save Reminder Time
+                        </button>
+                    </div>
+                )}
             </div>
 
             <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
@@ -843,7 +955,7 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
                                 <img 
                                     src={friend.photoURL} 
                                     alt={friend.displayName}
-                                    className="w-10 h-10 rounded-full"
+                                    className="w-10 h-10 rounded-full object-cover"
                                 />
                                 <div className="flex-grow">
                                     <p className="font-semibold">{friend.displayName}</p>
@@ -853,17 +965,59 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
                                     className="p-2 text-gray-600 hover:text-red-500"
                                     title="Remove friend"
                                 >
-                                    <i data-lucide="user-x" className="w-5 h-5"></i>
+                                    <UserX className="w-5 h-5" />
                                 </button>
                             </li>
                         ))}
                     </ul>
                 )}
             </div>
+
+            {showEdit && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowEdit(false)}>
+                    <div className="bg-gray-900 w-full max-w-md rounded-2xl p-6 border border-gray-800" onClick={e => e.stopPropagation()}>
+                        <h2 className="text-xl font-bold mb-4">Edit Profile</h2>
+                        
+                        {error && (
+                            <div className="bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded-lg mb-4 flex items-center">
+                                <ShieldAlert className="w-5 h-5 mr-3" />
+                                <span className="text-sm">{error}</span>
+                            </div>
+                        )}
+                        
+                        <form onSubmit={handleProfileUpdate} className="space-y-4">
+                            <div>
+                                <label className="text-sm font-medium text-gray-400">Display Name</label>
+                                <input 
+                                    type="text"
+                                    value={newDisplayName} 
+                                    onChange={e => setNewDisplayName(e.target.value)} 
+                                    className="w-full bg-black border border-gray-800 rounded-xl p-3 mt-1 focus:border-orange-500" 
+                                />
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-gray-400">Change Profile Picture</label>
+                                <input 
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleFileChange}
+                                    className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-orange-500 file:text-white hover:file:bg-orange-600 mt-1"
+                                />
+                            </div>
+                            <button 
+                                type="submit"
+                                disabled={uploading} 
+                                className="w-full flex items-center justify-center bg-orange-500 py-3 rounded-xl font-bold text-lg disabled:opacity-50"
+                            >
+                                {uploading ? <LoadingSpinner /> : 'Save Changes'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
-// --- END OF UPDATED PROFILE PAGE ---
 
 
 // --- 6. MAIN APP ---
@@ -925,24 +1079,50 @@ const App = () => {
         };
     }, [user, isAuthReady]);
 
+    // --- Notification Scheduler ---
     useEffect(() => {
-        window.lucide.createIcons();
-    }, [
-        currentView, 
-        profile, 
-        isAuthReady,
-        habits.length
-    ]);
+        if (!profile || !profile.reminderTime || !isAuthReady || habits.length === 0) {
+            return; // No user, no reminder time, or no habits
+        }
+        
+        if (Notification.permission !== 'granted') {
+            return; // Permission not granted
+        }
 
-    useEffect(() => {
-        if (!isAuthReady) return; 
-        const timer = setTimeout(() => {
-            window.lucide.createIcons();
-        }, 0);
+        // Check if all habits are already done
+        const todayStr = getISODateString(new Date());
+        const allDone = habits.every(h => 
+            completions.some(c => c.habitId === h.id && c.date === todayStr)
+        );
 
-        return () => clearTimeout(timer);
-    }, [completions, isAuthReady]);
+        if (allDone) {
+            return; // All habits are done, no reminder needed
+        }
 
+        // Calculate time until reminder
+        const [hours, minutes] = profile.reminderTime.split(':').map(Number);
+        const now = new Date();
+        const reminderDate = new Date();
+        reminderDate.setHours(hours, minutes, 0, 0);
+
+        if (now > reminderDate) {
+            return; // Reminder time for today has already passed
+        }
+
+        const timeoutMs = reminderDate.getTime() - now.getTime();
+        
+        const timerId = setTimeout(() => {
+            showNotification(
+                'StreakForge Reminder', 
+                "Don't forget to complete your habits and keep your streaks alive!"
+            );
+        }, timeoutMs);
+
+        return () => clearTimeout(timerId);
+
+    }, [profile, habits, completions, isAuthReady]);
+    
+    
     const handleEndFriendship = async (requestId, actionType = 'Remove') => {
         if (!user) return;
         
@@ -998,21 +1178,21 @@ const App = () => {
                     onClick={() => setCurrentView('dashboard')}
                     className={`flex flex-col items-center justify-center h-full px-4 ${currentView === 'dashboard' ? 'text-orange-500' : 'text-gray-500'}`}
                 >
-                    <i data-lucide="layout-dashboard" className="w-6 h-6"></i>
+                    <LayoutDashboard className="w-6 h-6" />
                     <span className="text-xs mt-1">Dashboard</span>
                 </button>
                 <button
                     onClick={() => setCurrentView('friends')}
                     className={`flex flex-col items-center justify-center h-full px-4 ${currentView === 'friends' ? 'text-orange-500' : 'text-gray-500'}`}
                 >
-                    <i data-lucide="users" className="w-6 h-6"></i>
+                    <Users className="w-6 h-6" />
                     <span className="text-xs mt-1">Friends</span>
                 </button>
                 <button
                     onClick={() => setCurrentView('profile')}
                     className={`flex flex-col items-center justify-center h-full px-4 ${currentView === 'profile' ? 'text-orange-500' : 'text-gray-500'}`}
                 >
-                    <i data-lucide="user" className="w-6 h-6"></i>
+                    <User className="w-6 h-6" />
                     <span className="text-xs mt-1">Profile</span>
                 </button>
             </nav>
