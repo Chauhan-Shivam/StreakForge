@@ -8,7 +8,6 @@ import 'firebase/compat/firestore';
 // --- 1. CONFIGURATION ---
 
 // --- Firebase Initialization ---
-// ✅ SECURE: Keys are loaded from environment variables
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -86,6 +85,23 @@ const calculateStreaks = (dateStrings) => {
   return { currentStreak, maxStreak };
 };
 
+// This function now lives in App.jsx but is called from DashboardPage
+const updateProfileScore = async (userId) => {
+    try {
+        const habitsSnapshot = await db.collection("users").doc(userId).collection("habits").get();
+        let totalCurrentStreak = 0;
+        habitsSnapshot.forEach(doc => {
+            totalCurrentStreak += (doc.data().currentStreak || 0);
+        });
+        
+        await db.collection("profiles").doc(userId).update({
+            totalScore: totalCurrentStreak
+        });
+    } catch (e) {
+        console.error("Error updating profile score: ", e);
+    }
+};
+
 // --- 3. REUSABLE COMPONENTS ---
 
 function LoadingSpinner({ fullScreen = false }) {
@@ -142,7 +158,8 @@ function AuthPage() {
           displayName: user.displayName,
           photoURL: user.photoURL,
           friends: [],
-          createdAt: new Date()
+          createdAt: new Date(),
+          totalScore: 0
         });
       }
     } catch (error) {
@@ -171,7 +188,8 @@ function AuthPage() {
           displayName: displayName,
           photoURL: `https://api.dicebear.com/7.x/initials/svg?seed=${displayName}`,
           friends: [],
-          createdAt: new Date()
+          createdAt: new Date(),
+          totalScore: 0
         });
       }
     } catch (error) {
@@ -269,8 +287,6 @@ function DashboardPage({ userId, habits, completions }) {
   const [newHabit, setNewHabit] = useState('');
   const [reorder, setReorder] = useState(false);
 
-  // --- BUG FIX ---
-  // Refresh icons only when list length changes, not on every toggle
   useEffect(() => { 
       window.lucide.createIcons(); 
   }, [showAdd, reorder, habits.length]);
@@ -312,7 +328,6 @@ function DashboardPage({ userId, habits, completions }) {
             await querySnapshot.docs[0].ref.delete();
         }
         
-        // Recalculate streaks
         const allCompletionsSnapshot = await db.collection('users').doc(userId).collection('completion')
             .where('habitId', '==', habitId).get();
         const allCompletionDates = allCompletionsSnapshot.docs.map(d => d.data().date);
@@ -322,6 +337,8 @@ function DashboardPage({ userId, habits, completions }) {
             currentStreak,
             maxStreak
         });
+        
+        await updateProfileScore(userId); // Update score on profile
 
     } catch (error) {
         console.error("Error toggling habit: ", error);
@@ -332,7 +349,7 @@ function DashboardPage({ userId, habits, completions }) {
       if(!confirm('Delete this habit?')) return;
       try {
           await db.collection('users').doc(userId).collection('habits').doc(id).delete();
-          // Also delete all completion records
+          
           const q = db.collection('users').doc(userId).collection('completion').where('habitId', '==', id);
           const querySnapshot = await q.get();
           const deletePromises = [];
@@ -340,6 +357,9 @@ function DashboardPage({ userId, habits, completions }) {
               deletePromises.push(docSnap.ref.delete());
           });
           await Promise.all(deletePromises);
+          
+          await updateProfileScore(userId); // Update score on profile
+
       } catch (error) {
           console.error("Error deleting habit: ", error);
       }
@@ -453,8 +473,8 @@ function DashboardPage({ userId, habits, completions }) {
   );
 }
 
-// --- THIS IS THE FULLY UPDATED FRIENDS PAGE ---
-function FriendsPage({ profile, userId }) {
+// --- FriendsPage now takes handleRemoveFriend as a prop ---
+function FriendsPage({ profile, userId, handleRemoveFriend }) {
   const [leaderboard, setLeaderboard] = useState([]);
   const [friendEmail, setFriendEmail] = useState('');
   const [loading, setLoading] = useState(true);
@@ -469,6 +489,7 @@ function FriendsPage({ profile, userId }) {
   const fetchFriendData = useCallback(async () => {
     if (!profile) return;
     setLoading(true);
+    setError(null); // Clear previous errors
     try {
       let friendIds = profile.friends || [];
       let allUserIds = [...friendIds, userId];
@@ -479,12 +500,8 @@ function FriendsPage({ profile, userId }) {
           if (!userProfileSnap.exists) continue;
           
           const userProfile = userProfileSnap.data();
-          const habitsSnapshot = await db.collection("users").doc(uid).collection("habits").get();
-          
-          let totalCurrentStreak = 0;
-          habitsSnapshot.forEach(doc => {
-              totalCurrentStreak += (doc.data().currentStreak || 0);
-          });
+          // Read the score from the public profile
+          const totalCurrentStreak = userProfile.totalScore || 0;
           
           leaderboardData.push({ ...userProfile, totalScore: totalCurrentStreak });
       }
@@ -494,7 +511,7 @@ function FriendsPage({ profile, userId }) {
 
     } catch (e) {
       console.error("Error fetching friend data: ", e);
-      setError("Could not load friend data.");
+      setError("Could not load friend data. Check security rules.");
     }
     setLoading(false);
   }, [profile, userId]);
@@ -610,7 +627,6 @@ function FriendsPage({ profile, userId }) {
           });
           
           fetchRequests(); 
-          // No need to call fetchFriendData(), the profile snapshot listener in App.jsx will do it.
       } catch (e) {
           console.error("Error accepting request:", e);
           setError("Failed to accept request.");
@@ -627,27 +643,8 @@ function FriendsPage({ profile, userId }) {
       }
   };
 
-  const handleRemoveFriend = async (friendUid) => {
-      if (!confirm('Are you sure you want to remove this friend?')) return;
-      
-      try {
-          // Remove friend from self
-          await db.collection("profiles").doc(userId).update({
-              friends: firebase.firestore.FieldValue.arrayRemove(friendUid)
-          });
-          // Remove self from friend
-          await db.collection("profiles").doc(friendUid).update({
-              friends: firebase.firestore.FieldValue.arrayRemove(userId)
-          });
-          
-          // The snapshot listener in App.jsx will automatically
-          // update the profile and trigger a re-fetch of the leaderboard.
-      } catch (e) {
-          console.error("Error removing friend:", e);
-          setError("Failed to remove friend.");
-      }
-  };
-
+  // handleRemoveFriend is now passed in as a prop
+  
   // --- 5. Render JSX ---
   return (
     <div className="p-4 pb-24 space-y-6">
@@ -756,11 +753,39 @@ function FriendsPage({ profile, userId }) {
     </div>
   );
 }
-// --- END OF UPDATED FRIENDS PAGE ---
 
+function ProfilePage({ profile, handleRemoveFriend }) {
+    const [friendList, setFriendList] = useState([]);
+    const [loadingFriends, setLoadingFriends] = useState(true);
 
-function ProfilePage({ profile }) {
-    useEffect(() => { window.lucide.createIcons(); }, []);
+    // This hook fetches the full profiles for your friends
+    useEffect(() => {
+        const fetchFriendProfiles = async () => {
+            if (!profile || !profile.friends || profile.friends.length === 0) {
+                setLoadingFriends(false);
+                setFriendList([]);
+                return;
+            }
+
+            setLoadingFriends(true);
+            const friendProfiles = [];
+            for (const friendId of profile.friends) {
+                const docSnap = await db.collection("profiles").doc(friendId).get();
+                if (docSnap.exists) {
+                    friendProfiles.push(docSnap.data());
+                }
+            }
+            setFriendList(friendProfiles);
+            setLoadingFriends(false);
+        };
+
+        fetchFriendProfiles();
+    }, [profile]); // Re-run when the profile (and its friends list) changes
+
+    useEffect(() => { 
+        // We need to call createIcons when the new friend list is rendered
+        window.lucide.createIcons();
+    }, [friendList, loadingFriends]);
     
     const handleSignOut = async () => {
         try {
@@ -775,8 +800,9 @@ function ProfilePage({ profile }) {
     }
 
     return (
-        <div className="p-4 max-w-lg mx-auto pb-24">
+        <div className="p-4 max-w-lg mx-auto pb-24 space-y-6">
             <h1 className="text-3xl font-bold text-white mb-6 text-center">Profile</h1>
+            
             <div className="bg-gray-800 p-6 rounded-xl shadow-lg flex flex-col items-center border border-gray-700">
                 <img 
                     src={profile.photoURL}
@@ -794,9 +820,42 @@ function ProfilePage({ profile }) {
                     Sign Out
                 </button>
             </div>
+          
+            <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                <h2 className="text-xl font-bold mb-4">Your Friends</h2>
+                {loadingFriends ? (
+                    <LoadingSpinner />
+                ) : friendList.length === 0 ? (
+                    <p className="text-gray-500">You haven't added any friends yet.</p>
+                ) : (
+                    <ul className="space-y-3">
+                        {friendList.map((friend) => (
+                            <li key={friend.uid} className="flex items-center gap-3 p-3 rounded-lg bg-gray-900">
+                                <img 
+                                    src={friend.photoURL} 
+                                    alt={friend.displayName}
+                                    className="w-10 h-10 rounded-full"
+                                />
+                                <div className="flex-grow">
+                                    <p className="font-semibold">{friend.displayName}</p>
+                                </div>
+                                <button 
+                                    onClick={() => handleRemoveFriend(friend.uid)} 
+                                    className="p-2 text-gray-600 hover:text-red-500"
+                                    title="Remove friend"
+                                >
+                                    <i data-lucide="user-x" className="w-5 h-5"></i>
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </div>
         </div>
     );
 }
+// --- END OF UPDATED PROFILE PAGE ---
+
 
 // --- 6. MAIN APP ---
 
@@ -804,13 +863,11 @@ const App = () => {
     const [user, setUser] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
     
-    // App-wide state
     const [profile, setProfile] = useState(null);
     const [habits, setHabits] = useState([]);
     const [completions, setCompletions] = useState([]);
     const [currentView, setCurrentView] = useState('dashboard');
 
-    // --- Auth Listener ---
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged((user) => {
             setUser(user);
@@ -824,7 +881,6 @@ const App = () => {
         return () => unsubscribe();
     }, []);
 
-    // --- Data Listeners ---
     useEffect(() => {
         if (!isAuthReady || !user) return;
 
@@ -840,7 +896,6 @@ const App = () => {
                 setHabits(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             });
         
-        // Fallback for habits if 'order' is not managed
         if (habits.length === 0) {
               db.collection("users").doc(user.uid).collection("habits")
                 .orderBy("createdAt", "asc")
@@ -861,19 +916,33 @@ const App = () => {
         };
     }, [user, isAuthReady]);
 
-    // --- Icon Refresher (BUG FIX) ---
     useEffect(() => {
         window.lucide.createIcons();
     }, [
         currentView, 
         profile, 
         isAuthReady,
-        habits.length, // Only re-run when habits are added/removed
-        completions.length // Only re-run when completions are added/removed
+        habits.length,
+        completions.length
     ]);
 
-    // --- Render Logic ---
-    
+    const handleRemoveFriend = async (friendUid) => {
+        if (!user) return;
+        if (!confirm('Are you sure you want to remove this friend?')) return;
+        
+        try {
+            await db.collection("profiles").doc(user.uid).update({
+                friends: firebase.firestore.FieldValue.arrayRemove(friendUid)
+            });
+            await db.collection("profiles").doc(friendUid).update({
+                friends: firebase.firestore.FieldValue.arrayRemove(user.uid)
+            });
+        } catch (e) {
+            console.error("Error removing friend:", e);
+        }
+    };
+
+
     if (!isAuthReady) {
         return <LoadingSpinner fullScreen />;
     }
@@ -892,11 +961,23 @@ const App = () => {
                         completions={completions}
                     />
                 )}
-                {currentView === 'friends' && <FriendsPage profile={profile} userId={user.uid} />}
-                {currentView === 'profile' && <ProfilePage profile={profile} />}
+                {/* --- Pass handleRemoveFriend as a prop --- */}
+                {currentView === 'friends' && (
+                    <FriendsPage 
+                        profile={profile} 
+                        userId={user.uid} 
+                        handleRemoveFriend={handleRemoveFriend} 
+                    />
+                )}
+                {/* --- Pass handleRemoveFriend as a prop --- */}
+                {currentView === 'profile' && (
+                    <ProfilePage 
+                        profile={profile} 
+                        handleRemoveFriend={handleRemoveFriend} 
+                    />
+                )}
             </main>
             
-            {/* Bottom Navigation */}
             <nav className="fixed bottom-0 left-0 right-0 h-20 bg-gray-900 border-t border-gray-800 flex justify-around items-center max-w-md mx-auto z-50">
                 <button
                     onClick={() => setCurrentView('dashboard')}
