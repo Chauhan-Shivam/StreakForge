@@ -9,7 +9,8 @@ import 'firebase/compat/storage';
 // --- React Icons ---
 import {
   Flame, Trophy, Check, Trash2, List, ArrowUp, ArrowDown, Calendar, Plus,
-  ShieldAlert, LogOut, User, Users, LayoutDashboard, Edit3, UserX, XCircle, X
+  ShieldAlert, LogOut, User, Users, LayoutDashboard, Edit3, UserX, XCircle, X,
+  ChevronDown, ChevronUp // Added for collapsible panel
 } from 'lucide-react';
 
 // --- 1. CONFIGURATION ---
@@ -82,16 +83,14 @@ const calculateStreaks = (dateStrings) => {
   return { currentStreak, maxStreak };
 };
 
-// --- NEW: Renamed and updated function for leaderboard ---
 const updateProfileMaxStreak = async (userId) => {
     try {
         const habitsSnapshot = await db.collection("users").doc(userId).collection("habits").get();
-        // Get all max streaks and find the highest one
         const maxStreaks = habitsSnapshot.docs.map(d => d.data().maxStreak || 0);
         const highestMaxStreak = Math.max(0, ...maxStreaks);
         
         await db.collection("profiles").doc(userId).update({
-            highestMaxStreak: highestMaxStreak // Save the single highest streak
+            highestMaxStreak: highestMaxStreak
         });
     } catch (e) {
         console.error("Error updating profile max streak: ", e);
@@ -161,8 +160,9 @@ function AuthPage() {
           displayName: user.displayName,
           photoURL: user.photoURL,
           createdAt: new Date(),
-          highestMaxStreak: 0, // --- NEW: For leaderboard
-          reminderTime: null 
+          highestMaxStreak: 0, 
+          reminderTime: null,
+          remindersEnabled: false // --- NEW: For notification toggle
         });
       }
     } catch (error) {
@@ -191,8 +191,9 @@ function AuthPage() {
           displayName: displayName,
           photoURL: `https://api.dicebear.com/7.x/initials/svg?seed=${displayName}`,
           createdAt: new Date(),
-          highestMaxStreak: 0, // --- NEW: For leaderboard
-          reminderTime: null
+          highestMaxStreak: 0,
+          reminderTime: null,
+          remindersEnabled: false // --- NEW: For notification toggle
         });
       }
     } catch (error) {
@@ -337,7 +338,6 @@ function DashboardPage({ userId, habits, completions }) {
             maxStreak
         });
         
-        // --- NEW: Update max streak for leaderboard ---
         await updateProfileMaxStreak(userId);
 
     } catch (error) {
@@ -358,7 +358,6 @@ function DashboardPage({ userId, habits, completions }) {
           });
           await Promise.all(deletePromises);
           
-          // --- NEW: Update max streak for leaderboard ---
           await updateProfileMaxStreak(userId);
 
       } catch (error) {
@@ -373,7 +372,7 @@ function DashboardPage({ userId, habits, completions }) {
   const activeCount = habits.filter(h => h.currentStreak > 0).length;
 
   return (
-    <div className="pb-24 md:pb-6"> {/* --- FIX: Responsive padding --- */}
+    <div className="pb-24 md:pb-6">
         <div className="p-4 flex justify-between items-center bg-gray-900/90 backdrop-blur sticky top-0 z-10 border-b border-white/10">
             <div className="flex items-center gap-2">
                 <div className="bg-orange-500 p-1.5 rounded">
@@ -386,7 +385,7 @@ function DashboardPage({ userId, habits, completions }) {
             </button>
         </div>
 
-        <div className="max-w-md mx-auto"> {/* --- NEW: Constrain content --- */}
+        <div className="max-w-md mx-auto">
             {!reorder && (
                 <div className="p-4">
                     <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-5 border border-white/10 shadow-lg relative overflow-hidden">
@@ -450,7 +449,6 @@ function DashboardPage({ userId, habits, completions }) {
             </div>
         </div>
 
-        {/* --- FIX: "Add" button is now ABSOLUTE --- */}
         {!reorder && (
             <button 
                 onClick={() => setShowAdd(true)} 
@@ -461,7 +459,6 @@ function DashboardPage({ userId, habits, completions }) {
             </button>
         )}
 
-        {/* --- FIX: Add bottom padding for nav bar --- */}
         {showAdd && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end justify-center pb-20 md:pb-0" onClick={() => setShowAdd(false)}>
                 <div className="bg-gray-900 w-full max-w-md rounded-t-3xl p-6 border-t border-gray-800" onClick={e => e.stopPropagation()}>
@@ -510,7 +507,6 @@ function FriendsPage({ userId, handleEndFriendship }) {
           if (!userProfileSnap.exists) continue;
           
           const userProfile = userProfileSnap.data();
-          // --- NEW: Read highestMaxStreak for leaderboard ---
           const highestMax = userProfile.highestMaxStreak || 0;
           
           leaderboardData.push({ 
@@ -520,7 +516,6 @@ function FriendsPage({ userId, handleEndFriendship }) {
           });
       }
       
-      // --- NEW: Sort by highestMaxStreak ---
       leaderboardData.sort((a, b) => b.highestMaxStreak - a.highestMaxStreak);
       setLeaderboard(leaderboardData);
 
@@ -644,7 +639,7 @@ function FriendsPage({ userId, handleEndFriendship }) {
   };
 
   return (
-    <div className="p-4 pb-24 space-y-6 md:pb-6 md:max-w-2xl md:mx-auto"> {/* --- FIX: Responsive layout --- */}
+    <div className="p-4 pb-24 space-y-6 md:pb-6 md:max-w-2xl md:mx-auto">
       <h1 className="text-3xl font-bold text-white">Friends</h1>
       
       <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
@@ -729,7 +724,6 @@ function FriendsPage({ userId, handleEndFriendship }) {
                     {user.displayName} {user.uid === userId && '(You)'}
                   </p>
                 </div>
-                {/* --- NEW: Show highestMaxStreak --- */}
                 <span className="font-bold text-lg text-orange-400">
                   {user.highestMaxStreak} 🏆
                 </span>
@@ -742,7 +736,8 @@ function FriendsPage({ userId, handleEndFriendship }) {
   );
 }
 
-function ProfilePage({ profile, userId, handleEndFriendship }) {
+// --- UPDATED PROFILE PAGE ---
+function ProfilePage({ profile, userId, handleEndFriendship, notifPermission, setNotifPermission }) {
     const [friendList, setFriendList] = useState([]);
     const [loadingFriends, setLoadingFriends] = useState(true);
 
@@ -752,7 +747,8 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState(null);
 
-    const [notifPermission, setNotifPermission] = useState(Notification.permission);
+    // --- NEW: Collapsible state ---
+    const [isNotifOpen, setIsNotifOpen] = useState(false);
     const [reminderTime, setReminderTime] = useState(profile?.reminderTime || '');
 
     const fetchFriendProfiles = useCallback(async () => {
@@ -854,11 +850,25 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
         }
     };
 
+    // --- UPDATED: Uses prop ---
     const requestNotifPermission = async () => {
         const permission = await Notification.requestPermission();
-        setNotifPermission(permission);
+        setNotifPermission(permission); // Set state in parent
         if (permission === 'granted') {
             showNotification('Notifications Enabled!', 'You will now receive reminders from StreakForge.');
+        }
+    };
+
+    // --- NEW: Handle Toggle ---
+    const handleToggleReminders = async (e) => {
+        const enabled = e.target.checked;
+        try {
+            await db.collection("profiles").doc(userId).update({
+                remindersEnabled: enabled
+            });
+        } catch (err) {
+            console.error("Error toggling reminders: ", err);
+            alert("Could not update setting.");
         }
     };
 
@@ -879,7 +889,7 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
     }
 
     return (
-        <div className="p-4 max-w-lg mx-auto pb-24 space-y-6 md:pb-6"> {/* --- FIX: Responsive padding --- */}
+        <div className="p-4 max-w-lg mx-auto pb-24 space-y-6 md:pb-6">
             <h1 className="text-3xl font-bold text-white mb-6 text-center">Profile</h1>
             
             <div className="bg-gray-800 p-6 rounded-xl shadow-lg flex flex-col items-center border border-gray-700">
@@ -913,37 +923,63 @@ function ProfilePage({ profile, userId, handleEndFriendship }) {
                 </button>
             </div>
             
-            <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                <h2 className="text-xl font-bold mb-4">Notifications</h2>
-                {notifPermission === 'default' && (
-                    <button 
-                        onClick={requestNotifPermission}
-                        className="w-full bg-blue-500 py-3 rounded-xl font-bold text-lg"
-                    >
-                        Enable Reminders
-                    </button>
-                )}
-                {notifPermission === 'denied' && (
-                    <p className="text-red-400">You have blocked notifications. You must enable them in your browser settings.</p>
-                )}
-                {notifPermission === 'granted' && (
-                    <div className="space-y-3">
-                        <p className="text-green-400">Notifications are enabled!</p>
-                        <div>
-                            <label className="text-sm font-medium text-gray-400">Daily Reminder Time</label>
-                            <input 
-                                type="time"
-                                value={reminderTime}
-                                onChange={(e) => setReminderTime(e.target.value)}
-                                className="w-full bg-black border border-gray-800 rounded-xl p-3 mt-1 focus:border-orange-500"
-                            />
-                        </div>
-                        <button 
-                            onClick={handleSaveReminder}
-                            className="w-full bg-orange-500 py-3 rounded-xl font-bold text-lg"
-                        >
-                            Save Reminder Time
-                        </button>
+            {/* --- NEW: Collapsible Notification Settings --- */}
+            <div className="bg-gray-800 rounded-xl shadow-lg border border-gray-700 overflow-hidden">
+                <button 
+                    onClick={() => setIsNotifOpen(!isNotifOpen)}
+                    className="w-full p-6 flex justify-between items-center"
+                >
+                    <h2 className="text-xl font-bold">Notifications</h2>
+                    {isNotifOpen ? <ChevronUp /> : <ChevronDown />}
+                </button>
+                
+                {isNotifOpen && (
+                    <div className="p-6 border-t border-gray-700">
+                        {notifPermission === 'default' && (
+                            <button 
+                                onClick={requestNotifPermission}
+                                className="w-full bg-blue-500 py-3 rounded-xl font-bold text-lg"
+                            >
+                                Enable Reminders
+                            </button>
+                        )}
+                        {notifPermission === 'denied' && (
+                            <p className="text-red-400">You have blocked notifications. You must enable them in your browser settings.</p>
+                        )}
+                        {notifPermission === 'granted' && (
+                            <div className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <label htmlFor="notif-toggle" className="text-lg font-medium text-white">Enable Reminders</label>
+                                    <input 
+                                        type="checkbox" 
+                                        id="notif-toggle"
+                                        checked={profile.remindersEnabled || false}
+                                        onChange={handleToggleReminders}
+                                        className="w-6 h-6 rounded text-orange-500 bg-gray-700 border-gray-600 focus:ring-orange-600"
+                                    />
+                                </div>
+
+                                {profile.remindersEnabled && (
+                                    <div className="space-y-3 pt-4 border-t border-gray-700">
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-400">Daily Reminder Time</label>
+                                            <input 
+                                                type="time"
+                                                value={reminderTime}
+                                                onChange={(e) => setReminderTime(e.target.value)}
+                                                className="w-full bg-black border border-gray-800 rounded-xl p-3 mt-1 focus:border-orange-500"
+                                            />
+                                        </div>
+                                        <button 
+                                            onClick={handleSaveReminder}
+                                            className="w-full bg-orange-500 py-3 rounded-xl font-bold text-lg"
+                                        >
+                                            Save Reminder Time
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -1038,6 +1074,10 @@ const App = () => {
     const [completions, setCompletions] = useState([]);
     const [currentView, setCurrentView] = useState('dashboard');
 
+    // --- NEW: Lifted state for notifications ---
+    const [notifPermission, setNotifPermission] = useState(Notification.permission);
+    const [hasSentToday, setHasSentToday] = useState(false); // Prevents spam
+
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged((user) => {
             setUser(user);
@@ -1086,46 +1126,50 @@ const App = () => {
         };
     }, [user, isAuthReady]);
 
-    // --- NEW: Notification Scheduler ---
+    // --- NEW: Robust Notification Scheduler ---
     useEffect(() => {
-        if (!profile || !profile.reminderTime || !isAuthReady || habits.length === 0) {
-            return;
-        }
-        
-        if (Notification.permission !== 'granted') {
-            return;
-        }
+        // Run a check every 30 seconds
+        const intervalId = setInterval(() => {
+            if (!profile || !profile.remindersEnabled || !profile.reminderTime || !isAuthReady || habits.length === 0 || Notification.permission !== 'granted') {
+                return; 
+            }
+            
+            const now = new Date();
+            const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            
+            // Not reminder time yet, reset the "sent" flag
+            if (currentTime !== profile.reminderTime) {
+                setHasSentToday(false);
+                return;
+            }
 
-        const todayStr = getISODateString(new Date());
-        const allDone = habits.every(h => 
-            completions.some(c => c.habitId === h.id && c.date === todayStr)
-        );
+            // It's the right time, but we already sent one
+            if (hasSentToday) {
+                return;
+            }
 
-        if (allDone) {
-            return;
-        }
+            // It's time! Check if habits are done.
+            const todayStr = getISODateString(new Date());
+            const allDone = habits.every(h => 
+                completions.some(c => c.habitId === h.id && c.date === todayStr)
+            );
 
-        const [hours, minutes] = profile.reminderTime.split(':').map(Number);
-        const now = new Date();
-        const reminderDate = new Date();
-        reminderDate.setHours(hours, minutes, 0, 0);
-
-        if (now > reminderDate) {
-            return;
-        }
-
-        const timeoutMs = reminderDate.getTime() - now.getTime();
-        
-        const timerId = setTimeout(() => {
+            if (allDone) {
+                return; // All habits are done, no reminder needed
+            }
+            
+            // --- ALL CHECKS PASSED: Send notification ---
             showNotification(
                 'StreakForge Reminder', 
                 "Don't forget to complete your habits and keep your streaks alive!"
             );
-        }, timeoutMs);
+            setHasSentToday(true); // Mark as sent for today
+            
+        }, 30000); // Check every 30 seconds
 
-        return () => clearTimeout(timerId);
+        return () => clearInterval(intervalId); // Cleanup interval
 
-    }, [profile, habits, completions, isAuthReady]);
+    }, [profile, habits, completions, isAuthReady, hasSentToday]); // Re-run if these change
     
     
     const handleEndFriendship = async (requestId, actionType = 'Remove') => {
@@ -1154,14 +1198,11 @@ const App = () => {
     }
 
     return (
-        // --- FIX: Responsive layout container ---
         <div className="bg-gray-900 min-h-screen">
-            {/* --- FIX: Main content area with sidebar spacing --- */}
             <main className="flex-1 md:ml-20"> 
-                {/* This is where we constrain the content on desktop,
-                  not the whole page.
-                */}
                 <div className="max-w-md mx-auto bg-gray-900 min-h-screen flex flex-col relative border-x border-gray-800 shadow-2xl">
+                    {/* --- BUG FIX: Remove global icon refreshers --- */}
+                    
                     {currentView === 'dashboard' && (
                         <DashboardPage 
                             userId={user.uid}
@@ -1180,12 +1221,13 @@ const App = () => {
                             profile={profile} 
                             userId={user.uid}
                             handleEndFriendship={handleEndFriendship} 
+                            notifPermission={notifPermission}
+                            setNotifPermission={setNotifPermission}
                         />
                     )}
                 </div>
             </main>
             
-            {/* --- FIX: Responsive Nav Bar --- */}
             <nav className="fixed bottom-0 left-0 right-0 h-20 bg-gray-900 border-t border-gray-800 flex justify-around items-center z-50
                         md:top-0 md:left-0 md:h-screen md:w-20 md:flex-col md:justify-start md:border-t-0 md:border-r">
                 <button
